@@ -1,0 +1,239 @@
+
+---
+
+## Deploy section
+
+- name: "Start of role customer-service with tag Add"
+  delegate_to: localhost
+  debug:
+    msg: "Operating on customer {{ customer_id }} using segment ID {{ segment_id }}"
+  when: bigip[id] == master
+  tags:
+    - add
+
+- name: "Copy the CA certificate"
+  copy:
+    src: "../cacert.pem"
+    dest: "/tmp/cacert.pem"
+    mode: 0600
+  when: bigip[id] == master
+  tags:
+    - add
+
+- name: "Copy the CA key"
+  copy:
+    src: "../cakey.pem"
+    dest: "/tmp/cakey.pem"
+    mode: 0600
+  when: bigip[id] == master
+  tags:
+    - add
+
+- name: "Copy the blocking page"
+  copy:
+    src: "../blocking-page.html"
+    dest: "/tmp/blocking-page.html"
+    mode: 0600
+  when: bigip[id] == master
+  tags:
+    - add
+
+- name: "Copy the F5 logo JPEG"
+  copy:
+    src: "../f5.jpg"
+    dest: "/tmp/f5.jpg"
+    mode: 0600
+  when: bigip[id] == master
+  tags:
+    - add
+
+- name: Add to the BIG-IP library the iApp file customer-services-forwarding.tmpl
+  delegate_to: localhost
+  bigip_iapp_template:
+    content: "{{ lookup('template', 'customer-services-forwarding.tmpl') }}"
+#    force: false
+    server: "{{ bigip[id] }}"
+    state: "present"
+  tags:
+    - add
+
+# This is a workaround due to an iApp bug
+
+- name: Deploy the iApp customer-services-forwarding (without blocked categories)
+  delegate_to: localhost
+  bigip_iapp_service:
+    name: "customer-services-forwarding-{{ segment_id }}"
+    template: customer-services-forwarding
+    traffic_group: "none"
+    #force: true
+    server: "{{ bigip[id] }}"
+    state: "present"
+    parameters:
+      variables:
+         - name: "var__blocking_page"
+           value: "blocking-page.html"
+         - name: "var__blocking_page_import"
+           value: "file:///tmp/blocking-page.html"
+         - name: "var__ca_cert"
+           value: "cacert.pem"
+         - name: "var__ca_cert_import"
+           value: "file:///tmp/cacert.pem"
+         - name: "var__ca_key"
+           value: "cakey.pem"
+         - name: "var__ca_key_import"
+           value: "file:///tmp/cakey.pem"
+         - name: "var__f5_logo"
+           value: "f5.jpg"
+         - name: "var__f5_logo_import"
+           value: "file:///tmp/f5.jpg"
+         - name: "var__max_rate"
+           value: "{{ max_rate }}"
+         - name: "var__segment_id"
+           value: "{{ segment_id }}"
+         - name: "var__snat_addresses"
+           value: "{{ snat_addresses }}"
+         - name: "var__traffic_group"
+           value: "{{ traffic_group }}"
+         - name: "dr__filtered_categories"
+           value: ""
+  when: bigip[id] == master
+  tags:
+    - add
+
+- name: Update the iApp customer-services-forwarding with the blocked categories
+  delegate_to: localhost
+  bigip_iapp_service:
+    name: "customer-services-forwarding-{{ segment_id }}"
+    template: customer-services-forwarding
+    traffic_group: "none"
+#    force: true
+    server: "{{ bigip[id] }}"
+    state: "present"
+    parameters:
+      variables:
+         - name: "var__blocking_page"
+           value: "blocking-page.html"
+         - name: "var__blocking_page_import"
+           value: "file:///tmp/blocking-page.html"
+         - name: "var__ca_cert"
+           value: "cacert.pem"
+         - name: "var__ca_cert_import"
+           value: "file:///tmp/cacert.pem"
+         - name: "var__ca_key"
+           value: "cakey.pem"
+         - name: "var__ca_key_import"
+           value: "file:///tmp/cakey.pem"
+         - name: "var__f5_logo"
+           value: "f5.jpg"
+         - name: "var__f5_logo_import"
+           value: "file:///tmp/f5.jpg"
+         - name: "var__max_rate"
+           value: "{{ max_rate }}"
+         - name: "var__segment_id"
+           value: "{{ segment_id }}"
+         - name: "var__snat_addresses"
+           value: "{{ snat_addresses }}"
+         - name: "var__traffic_group"
+           value: "{{ traffic_group }}"
+         - name: "dr__filtered_categories"
+           value: "{{ blocked_categories }}"
+  when: bigip[id] == master
+  tags:
+    - add
+
+#- name: Add to the BIG-IP library the iApp file DNSTunnelMitigationV7.tmpl
+#  delegate_to: localhost
+#  bigip_iapp_template:
+#    content: "{{ lookup('template', 'DNSTunnelMitigationV7.tmpl') }}"
+##    force: false
+#    server: "{{ bigip[id] }}"
+#    state: "present"
+#  tags:
+#    - add
+#
+# This currently fails, see https://github.com/F5Networks/f5-ansible/issues/547
+
+- name: "Copy the iApp DNSTunnelMitigationV7.tmpl"
+  copy:
+    src: "../DNSTunnelMitigationV7.tmpl"
+    dest: "/tmp/DNSTunnelMitigationV7.tmpl"
+    mode: 0600
+  when: bigip[id] == master
+  tags:
+    - add
+
+- name: "Add to the BIG-IP library the iApp file DNSTunnelMitigationV7.tmpl"
+  bigip_command:
+      server: "{{ bigip[id] }}"
+      commands:
+      - load sys config merge file /tmp/DNSTunnelMitigationV7.tmpl
+  delegate_to: localhost
+  when: bigip[id] == master
+  tags:
+    - add
+
+- name: Instantiate the iApp for anti DNS tunneling
+  delegate_to: localhost
+  bigip_iapp_service:
+    name: "customer_services_antidnstunneling_{{ segment_id }}"
+    template: DNSTunnelMitigationV7 
+    traffic_group: "none"
+#    force: true
+    server: "{{ bigip[id] }}"
+    state: "present"
+    parameters:
+      lists:
+        - name: "virtualServers__vsNamesDGLB"
+          value: 
+            - "/Common/customer-services-forwarding-{{ segment_id }}.app/dns"
+      variables: 
+        - name: "WL__globWhitelist"
+          value: "no_whitelist"
+        - name: "WL__perClientWLconLimit"
+          value: "no_whitelist"
+        - name: "WL__perClientWLlongQ"
+          value: "no_whitelist"
+        - name: "WL__perClientWLlongResp"
+          value: "no_whitelist"
+        - name: "WL__perClientWLnxdomain"
+          value: "no_whitelist"
+        - name: "WL__perClientWLresolLimit"
+          value: "no_whitelist" 
+        - name: "WL__perClientWLunusualQ"
+          value: "no_whitelist"
+        - name: "dnsReqEnforce__globalConnLim"
+          value: "110000"
+        - name: "dnsReqEnforce__longReqLim"
+          value: "10"
+        - name: "dnsReqEnforce__maxReqLen"
+          value: "80"
+        - name: dnsReqEnforce__maxResolvedLim
+          value: "100"
+        - name: "dnsReqEnforce__perClientLim"
+          value: "200"
+        - name: "dnsReqEnforce__unusualReqLim"
+          value: "20"
+        - name: "dnsRespEnforce__longRespLim"
+          value: "20"
+        - name: "dnsRespEnforce__maxRespLen"
+          value: "200"
+        - name: "dnsRespEnforce__nxdomRespLim"
+          value: "20"
+        - name: "genSettings__blackListTime"
+          value: "0"
+        - name: "genSettings__datagramLB"
+          value: "Yes"
+        - name: "genSettings__enaReverseDnat"
+          value: "No"
+        - name: "genSettings__enableDropping"
+          value: "Yes"
+        - name: "genSettings__filterTime"
+          value: "1000"
+        - name: "genSettings__loggingConf"
+          value: "local"
+        - name: "genSettings__penaltyTime" 
+          value: "10"
+  when: bigip[id] == master
+  tags:
+    - add
+

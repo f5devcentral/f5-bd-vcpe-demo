@@ -1,0 +1,172 @@
+---
+
+# Traffic Groups are synchronized but when adding a new member to an existing cluster we have to deploy it
+# beforehand in the BIG-IP before deploying customer-networks iroles which are deployed wiht traffic-groups
+
+#### Add tasks
+
+- name: Add to the BIG-IP library the iApp file traffic-group-56.tmpl
+  delegate_to: localhost
+  bigip_iapp_template:
+    content: "{{ lookup('template', 'traffic-group-56.tmpl') }}"
+    force: true 
+    server: "{{ bigip[id] }}"
+    state: "present"
+  when: bigip_cluster_member[id] == True
+  tags:
+    - add
+
+- name: Deploy the traffic-group-56 service
+  delegate_to: localhost
+  bigip_iapp_service:
+    name: "traffic-group-56"
+    template: traffic-group-56
+    traffic_group: "none"
+    force: true
+    server: "{{ bigip[id] }}"
+    state: "present"
+    parameters:
+      variables:
+         # When using ansible tower, the tg_load dict key needs to be specified this way... I'm puzzled even when not using numbers and renaming it as tg<number> I had to specify it with quotes
+         - name: "var__tg_load1"
+           value: "{{ tg_load['1'] }}"
+         - name: "var__tg_load2"
+           value: "{{ tg_load['2'] }}"
+         - name: "var__tg_load3"
+           value: "{{ tg_load['3'] }}"
+         - name: "var__tg_load4"
+           value: "{{ tg_load['4'] }}"
+         - name: "var__tg_load5"
+           value: "{{ tg_load['5'] }}"
+         - name: "var__tg_load6"
+           value: "{{ tg_load['6'] }}"
+         - name: "var__tg_load7"
+           value: "{{ tg_load['7'] }}"
+         - name: "var__tg_load8"
+           value: "{{ tg_load['8'] }}"
+         - name: "var__tg_load9"
+           value: "{{ tg_load['9'] }}"
+         - name: "var__tg_load10"
+           value: "{{ tg_load['10'] }}"
+         - name: "var__tg_load11"
+           value: "{{ tg_load['11'] }}"
+         - name: "var__tg_load12"
+           value: "{{ tg_load['12'] }}"
+         - name: "var__tg_load13"
+           value: "{{ tg_load['13'] }}"
+         - name: "var__tg_load14"
+           value: "{{ tg_load['14'] }}"
+         - name: "var__tg_load15"
+           value: "{{ tg_load['15'] }}"
+         - name: "var__tg_load16"
+           value: "{{ tg_load['16'] }}"
+         - name: "var__tg_load17"
+           value: "{{ tg_load['17'] }}"
+         - name: "var__tg_load18"
+           value: "{{ tg_load['18'] }}"
+         - name: "var__tg_load19"
+           value: "{{ tg_load['19'] }}"
+         - name: "var__tg_load20"
+           value: "{{ tg_load['20'] }}"
+         - name: "var__tg_load21"
+           value: "{{ tg_load['21'] }}"
+         - name: "var__tg_load22"
+           value: "{{ tg_load['22'] }}"
+         - name: "var__tg_load23"
+           value: "{{ tg_load['23'] }}"
+         - name: "var__tg_load24"
+           value: "{{ tg_load['24'] }}"
+         - name: "var__tg_load25"
+           value: "{{ tg_load['25'] }}"
+         - name: "var__tg_load26"
+           value: "{{ tg_load['26'] }}"
+         - name: "var__tg_load27"
+           value: "{{ tg_load['27'] }}"
+         - name: "var__tg_load28"
+           value: "{{ tg_load['28'] }}"
+         - name: "var__tg_load29"
+           value: "{{ tg_load['29'] }}"
+         - name: "var__tg_load30"
+           value: "{{ tg_load['30'] }}"
+         - name: "var__tg_load31"
+           value: "{{ tg_load['31'] }}"
+         - name: "var__tg_load32"
+           value: "{{ tg_load['32'] }}"
+         - name: "var__tg_load33"
+           value: "{{ tg_load['33'] }}"
+         - name: "var__tg_load34"
+           value: "{{ tg_load['34'] }}"
+         - name: "var__tg_load35"
+           value: "{{ tg_load['35'] }}"
+         - name: "var__tg_load36"
+           value: "{{ tg_load['36'] }}"
+         - name: "var__tg_load37"
+           value: "{{ tg_load['37'] }}"
+         - name: "var__tg_load38"
+           value: "{{ tg_load['38'] }}"
+         - name: "var__tg_load39"
+           value: "{{ tg_load['39'] }}"
+         - name: "var__tg_load40"
+           value: "{{ tg_load['40'] }}"
+         - name: "var__tg_load41"
+           value: "{{ tg_load['41'] }}"
+         - name: "var__tg_load42"
+           value: "{{ tg_load['42'] }}"
+         - name: "var__tg_load43"
+           value: "{{ tg_load['43'] }}"
+         - name: "var__tg_load44"
+           value: "{{ tg_load['44'] }}"
+         - name: "var__tg_load45"
+           value: "{{ tg_load['45'] }}"
+         - name: "var__tg_load46"
+           value: "{{ tg_load['46'] }}"
+         - name: "var__tg_load47"
+           value: "{{ tg_load['47'] }}"
+         - name: "var__tg_load48"
+           value: "{{ tg_load['48'] }}"
+         - name: "var__tg_load49"
+           value: "{{ tg_load['49'] }}"
+         - name: "var__tg_load50"
+           value: "{{ tg_load['50'] }}"
+         - name: "var__tg_load51"
+           value: "{{ tg_load['51'] }}"
+         - name: "var__tg_load52"
+           value: "{{ tg_load['52'] }}"
+         - name: "var__tg_load53"
+           value: "{{ tg_load['53'] }}"
+         - name: "var__tg_load54"
+           value: "{{ tg_load['54'] }}"
+         - name: "var__tg_load55"
+           value: "{{ tg_load['55'] }}"
+         - name: "var__tg_load56"
+           value: "{{ tg_load['56'] }}"
+  when: bigip_cluster_member[id] == True
+  tags:
+    - add
+
+#### Remove tasks
+
+- name: Undeploy the traffic-group-56 service
+  delegate_to: localhost
+  bigip_iapp_service:
+    name: "traffic-group-56"
+    template: traffic-group-56
+    force: true
+    server: "{{ bigip[id] }}"
+    state: "absent"
+  when: bigip_cluster_member[id] == False
+  tags:
+    - del
+
+- name: Delete from the BIG-IP library the iApp file traffic-group-56.tmpl
+  delegate_to: localhost
+  bigip_iapp_template:
+    content: "{{ lookup('template', 'traffic-group-56.tmpl') }}"
+    force: true
+    server: "{{ bigip[id] }}"
+    state: "absent"
+  when: bigip_cluster_member[id] == False
+  tags:
+    - del
+
+

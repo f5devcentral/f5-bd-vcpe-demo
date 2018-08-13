@@ -1,0 +1,22 @@
+---
+
+bigip_cluster_member_dflt: 
+  bigip1: true
+  bigip2: true
+  bigip3: false
+  bigip4: false
+  bigip5: false
+  bigip6: false
+  bigip7: false
+  bigip8: false
+
+bigip_dflt:
+  bigip1: "10.105.211.23"
+  bigip2: "10.105.211.24"
+  bigip3: "10.105.211.25" 
+  bigip4: "10.105.211.26" 
+  bigip5: "10.105.211.29" 
+  bigip6: "10.105.211.30"
+  bigip7: "10.105.211.31"
+  bigip8: "10.105.211.32"
+

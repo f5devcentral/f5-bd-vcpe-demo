@@ -1,0 +1,17 @@
+@label(__ha_interface__): Physical interface used for HA configuration
+@label(__local__ha_prefix__): IP addresses used for HA configuration
+
+net vlan ha {
+    mtu 1450
+    interfaces {
+        __ha_interface__ { }
+    }
+    tag 4093
+}
+
+net self ha {
+    address __local__ha_prefix__ 
+    allow-service all
+    vlan ha
+}
+

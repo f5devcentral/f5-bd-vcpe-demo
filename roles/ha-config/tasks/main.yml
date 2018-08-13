@@ -1,0 +1,127 @@
+--- 
+
+#### Add tasks
+
+- name: "Set config sync address and failover addresses"
+  bigip_command:
+      server: "{{ bigip[id] }}"
+      commands:
+      - modify cm device {{ bigip_fqdn[id] }} configsync-ip {{ bigip_ha[id] }}
+#      - modify cm device {{ bigip_fqdn[id] }} unicast-address { { ip {{ bigip_ha[id] }} } { ip management-ip } }
+      - modify cm device {{ bigip_fqdn[id] }} unicast-address { { ip {{ bigip_ha[id] }} } }
+  delegate_to: localhost
+  when: bigip_cluster_member[id] == True
+  tags:
+    - add
+
+- name: "Set device HA capacity"
+  bigip_command:
+      server: "{{ bigip[id] }}"
+      commands:
+      - modify cm device {{ bigip_fqdn[id] }} ha-capacity {{ bigip_capacity[id] }}
+  delegate_to: localhost
+  when: bigip_cluster_member[id] == True
+  tags:
+    - add
+ 
+- name: "Add the BIG-IP to the trust-domain"
+  bigip_command:
+      server: "{{ master }}"
+      commands:
+      - modify cm trust-domain Root ca-devices add { {{ bigip_mgmt[id] }} } username {{ ansible_env.F5_USER }} password {{ ansible_env.F5_PASSWORD }} name {{ bigip_fqdn[id] }}
+  when: master != bigip[id] and bigip_cluster_member[id] == True
+  delegate_to: localhost
+  tags:
+    - add
+
+- name: "Create the sync-failover group"
+  bigip_command:
+      server: "{{ master }}"
+      commands:
+      - create cm device-group ha-group type sync-failover
+  when: master == bigip[id] and bigip_cluster_member[id] == True
+  delegate_to: localhost
+  tags:
+    - add
+
+- name: "Add the BIG-IP to the sync-failover group"
+  bigip_command:
+      server: "{{ master }}"
+      commands:
+      - modify cm device-group ha-group devices add { {{ bigip_fqdn[id] }} }
+  when: bigip_cluster_member[id] == True
+  delegate_to: localhost
+  tags:
+    - add
+
+#### Remove tasks
+
+- name: "Remove the BIG-IP from the sync-failover group"
+  bigip_command:
+      server: "{{ master }}"
+      commands:
+      - modify cm device-group ha-group devices delete { {{ bigip_fqdn[id] }} }
+  when: bigip_cluster_member[id] == False 
+  delegate_to: localhost
+  tags:
+    - del
+
+- name: "Remove the sync-failover group"
+  bigip_command:
+      server: "{{ master }}"
+      commands:
+      - delete cm device-group ha-group
+  when: master == bigip[id] and bigip_cluster_member[id] == False
+  delegate_to: localhost
+  tags:
+    - del
+
+- name: "Remove the BIG-IP from the trust domain"
+  bigip_command:
+      server: "{{ master }}"
+      commands:
+#      - modify cm trust-domain Root ca-devices add { {{ bigip_mgmt }} } username {{ ansible_env.F5_USER }} password {{ ansible_env.F5_PASSWORD }} name {{ bigip_fqdn }}
+# v12
+      - modify cm trust-domain Root ca-devices delete { {{ bigip_fqdn[id] }} }
+# v13 from KI / wrong
+#      - modify cm trust-domain Root remove-device {{ bigip_fqdn }} 
+  when: master != bigip[id] and bigip_cluster_member[id] == False
+  delegate_to: localhost
+  tags:
+    - del
+
+# The next task is not needed (at least in in v13) but doesn't fail if run and leaves the config in a more clean state
+- name: "Remove any trust in BIG-IP"
+  bigip_command:
+      server: "{{ bigip[id] }}"
+      commands:
+#      - modify cm trust-domain Root ca-devices none
+      - restart cm trust-domain all 
+  when: bigip_cluster_member[id] == False
+  delegate_to: localhost
+  tags:
+    - del
+
+- name: "Set device HA capacity to factory default"
+  bigip_command:
+      server: "{{ bigip[id] }}"
+      commands:
+      - modify cm device {{ bigip_fqdn[id] }} ha-capacity 0
+  delegate_to: localhost
+  when: bigip_cluster_member[id] == False
+  tags:
+    - del
+
+- name: "Unset config sync address and failover addresses"
+  bigip_command:
+      server: "{{ bigip[id] }}"
+      commands:
+      - modify cm device {{ bigip_fqdn[id] }} configsync-ip none 
+      - modify cm device {{ bigip_fqdn[id] }} unicast-address none
+#      - save sys config
+  delegate_to: localhost
+  when: bigip_cluster_member[id] == False
+  tags:
+    - del
+
+

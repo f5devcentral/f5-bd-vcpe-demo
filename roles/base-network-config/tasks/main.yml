@@ -1,0 +1,62 @@
+---
+
+### Deploy
+
+- name: Add to the BIG-IP library the iApp file base-network-config.tmpl
+  delegate_to: localhost
+  bigip_iapp_template:
+    content: "{{ lookup('template', 'base-network-config.tmpl') }}"
+    force: true 
+    server: "{{ bigip[id] }}"
+    state: "present"
+  when: bigip_cluster_member[id] == True
+  tags:
+    - add
+
+- name: Deploy the iApp base-network-config
+  delegate_to: localhost
+  bigip_iapp_service:
+    name: base-network-config 
+    template: base-network-config
+    traffic_group: "traffic-group-local-only"
+    force: true 
+    server: "{{ bigip[id] }}"
+    state: "present"
+    parameters:
+      variables:
+         - name: "local__bigip_names"
+           value: "{{ bigip_names | join(' ') }}"
+         - name: "var__ha_interface"
+           value: "{{ bigip_ha_interface }}"
+         - name: "local__ha_prefix"
+           value: "{{ bigip_ha | dictsort | map(attribute='1') | map('regex_replace','$','/24') | list | join (' ') }}"
+  when: bigip_cluster_member[id] == True
+  tags:
+    - add
+
+### Undeploy
+
+- name: Undeploy the iApp base-network-config
+  delegate_to: localhost
+  bigip_iapp_service:
+    name: base-network-config
+    template: base-network-config
+    force: true
+    server: "{{ bigip[id] }}"
+    state: "absent"
+  when: bigip_cluster_member[id] == False
+  tags:
+    - del
+
+- name: Delete from BIG-IP the iApp file base-network-config.tmpl
+  delegate_to: localhost
+  bigip_iapp_template:
+    content: "{{ lookup('template', 'base-network-config.tmpl') }}"
+    force: true
+    server: "{{ bigip[id] }}"
+    state: "absent"
+  when: bigip_cluster_member[id] == False 
+  tags:
+    - del
+
+

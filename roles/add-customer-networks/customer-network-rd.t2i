@@ -1,0 +1,29 @@
+@label(__local__self_customer__): IP address with prefix of the self interface of the customer
+@label(__segment_id__): Segment ID of the customer L2
+@label(__tgid__): Traffic Group ID assigned to the customer
+@label(__provider_interface__): Physical interface used as provider network
+
+net vlan customer-__segment_id__ {
+    interfaces {
+        __provider_interface__ {
+            tagged
+        }
+    }
+    tag __segment_id__
+}
+
+net route-domain customer-__segment_id__ {
+    id __segment_id__
+    parent /Common/0
+    strict disabled
+    vlans {
+        customer-__segment_id__
+    }
+}
+
+net self self-customer-__segment_id__ {
+    address __local__self_customer__
+    traffic-group /Common/traffic-group-local-only
+    vlan customer-__segment_id__
+}
+

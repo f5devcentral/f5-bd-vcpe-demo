@@ -1,0 +1,9 @@
+ltm virtual-address 0.0.0.0 {
+    address any
+    arp disabled
+    icmp-echo disabled
+    mask any
+    spanning enabled
+    traffic-group none
+}
+

@@ -1,0 +1,75 @@
+cli admin-partitions {
+    update-partition Common
+}
+
+sys application template wildcard-virtual-address {
+
+    actions {
+        definition {
+
+            implementation {
+
+		puts "Starting iApp $tmsh::app_name.app generated with tmsh2iapp version 20171127.2"
+
+                set partition "/[lindex [split [tmsh::pwd] /] 1]"
+
+                puts "The iApp is being instantiated in @partition $partition"
+                if { $partition == "/" } { puts "Warning: unexpected behaviour when @partition variable is to \"/\"" }
+
+
+puts "Dumping values passed to iApp variables"
+puts ">>> regular variables"
+puts ">>> pool member variables"
+puts ">>> data record variables"
+puts ">>> firewall address list variables"
+puts ">>> firewall port list variables"
+puts ">>> url match category list variables"
+puts ">>> url nomatch category list variables"
+puts ">>> iworkflow variables"
+puts "End of dumping values passed to iApp variables"
+
+                set cfg { ltm virtual-address 0.0.0.0 {
+    address any
+    arp disabled
+    icmp-echo disabled
+    mask any
+    spanning enabled
+    traffic-group none
+} }
+
+
+                set cfg [string map "@service_folder $tmsh::app_name.app @partition $partition __app_service__ $tmsh::app_name.app/$tmsh::app_name " $cfg]
+
+                set fileId [open /var/tmp/wildcard-virtual-address.cfg "w"]
+                puts -nonewline $fileId $cfg
+                close $fileId
+
+                
+                tmsh::load sys config merge file /var/tmp/wildcard-virtual-address.cfg
+
+
+
+
+
+
+
+
+
+
+
+
+    
+                puts "Finished iApp $tmsh::app_name.app generated with tmsh2iapp version 20171127.2"
+            }
+    
+            presentation {
+
+                include "/Common/f5.apl_common"
+                text {
+                }
+            } 
+            role-acl { admin manager resource-admin }
+        }
+    }
+
+}

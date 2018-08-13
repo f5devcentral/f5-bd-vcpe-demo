@@ -1,0 +1,214 @@
+---
+
+- name: "Begin of add-customer-networks"
+  debug:
+    msg: "Begin of add-customer-networks"
+  tags:
+    - add
+
+- name: "Clean BIG-IP auth tokens" 
+  delegate_to: localhost
+  shell: |
+    curl -sk -w %{http_code} -o /dev/null https://{{bigip[id]}}/mgmt/shared/authz/tokens -u {{ ansible_env.F5_USER }}:{{ ansible_env.F5_PASSWORD }} -X DELETE
+  register: result
+  failed_when:
+    - "'200' not in result.stdout"
+  tags:
+    - add 
+
+- name: Create L2 for customer's vBNG
+  delegate_to: localhost
+  os_network:
+    name: "customer-{{ segment_id }}"
+    state: present
+    provider_segmentation_id: "{{ segment_id }}"
+    provider_network_type: "vxlan"
+  when: bigip_cluster_member[id] == True and bigip[id] == master
+  tags:
+    - add
+
+- name: Create L3 for customer's vBNG
+  delegate_to: localhost
+  os_subnet:
+    state: present
+    network_name: "customer-{{ segment_id }}"
+    name: "customer-{{ segment_id }}" 
+    ip_version: 4
+    cidr: "192.168.{{ segment_id }}.0/24"
+    enable_dhcp: no
+    allocation_pool_start: "192.168.{{ segment_id }}.3"
+    allocation_pool_end: "192.168.{{ segment_id }}.254"
+#    gateway_ip: "0.0.0.0"
+  when: bigip_cluster_member[id] == True and bigip[id] == master
+  tags:
+    - add
+
+# This is just to allocate the IP address, we have to create it first before allocating the non-floating ones
+# Note: the actual self-floaitng creation is in other-virtuals.t2i
+
+- name: Create port for default gateway in customer's vBNG network
+  delegate_to: localhost
+  os_port:
+    state: present
+    name: "floating-customer-{{ segment_id }}"
+    network: "customer-{{ segment_id }}"
+    fixed_ips:
+      - ip_address: "192.168.{{ segment_id }}.3"
+  when: bigip_cluster_member[id] == True and bigip[id] == master
+  tags:
+    - add
+
+# Creating them in master we don't need to have all the BIG-IPs enabled in the inventory
+- name: Create port for BIG-IP in customer's vBNG network
+  delegate_to: localhost
+  os_port:
+    state: present
+    name: "{{bigip_fqdn[item]}}-customer-{{ segment_id }}"
+    network: "customer-{{ segment_id }}"
+    mac_address: "{{ bigip_provider[item] }}"
+    allowed_address_pairs:
+      - ip_address: 0.0.0.0/0
+        mac_address: "{{ bigip_provider[item] }}"
+  with_items: "{{ bigip_names }}"
+  when: bigip_cluster_member[id] == True and bigip[id] == master
+  tags:
+    - add
+
+- name: Assign new port for vBNG to trunk
+  delegate_to: localhost
+  shell: |
+    openstack network trunk set --subport port={{bigip_fqdn[item]}}-customer-{{segment_id}},segmentation-type=vlan,segmentation-id={{segment_id}} {{bigip_fqdn[item]}}-provider-trunk
+  with_items: "{{ bigip_names }}"
+  when: bigip_cluster_member[id] == True and bigip[id] == master
+  register: result
+  failed_when:
+    - not result|success
+    - "'is in use by another trunk' not in result.stderr"
+  tags:
+    - add 
+
+- name: Gather facts of customer's vBNG ports
+  delegate_to: localhost
+  os_port_facts:
+    port: "{{bigip_fqdn[item]}}-customer-{{ segment_id }}" 
+  with_items: "{{ bigip_names }}"
+  register: customer_ports
+  tags:
+    - add
+
+- name: Create L2 for customer's access
+  delegate_to: localhost
+  os_network:
+    name: "customer-access-{{ segment_id }}"
+    state: present
+    provider_segmentation_id: "{{ ((segment_id|int) +1000)|string}}"
+    provider_network_type: "vxlan"
+  when: bigip_cluster_member[id] == True and bigip[id] == master
+  tags:
+    - add
+
+- name: Create L3 for customer's access
+  delegate_to: localhost
+  os_subnet:
+    state: present
+    network_name: "customer-access-{{ segment_id }}"
+    name: "customer-access-{{ segment_id }}"
+    ip_version: 4
+    # All have the same address for their access
+    cidr: "192.168.1.0/24"
+    enable_dhcp: yes
+    allocation_pool_start: "192.168.1.3"
+    allocation_pool_end: "192.168.1.254"
+#    gateway_ip: "0.0.0.0"
+  when: bigip_cluster_member[id] == True and bigip[id] == master
+  tags:
+    - add
+
+- name: "Create customer's vBNG"
+  delegate_to: localhost
+  os_router:
+    state: present
+    name: "bng-customer-{{ segment_id}}"
+    enable_snat: "False"
+    interfaces: 
+      - customer-{{ segment_id }}
+      - customer-access-{{ segment_id }}
+  when: bigip_cluster_member[id] == True and bigip[id] == master
+  tags:
+    - add
+
+- name: Add default route through the BIG-IP
+  delegate_to: localhost
+  shell: |
+    openstack router set --route destination=0.0.0.0/0,gateway=192.168.{{ segment_id }}.3 bng-customer-{{ segment_id }}
+  when: bigip_cluster_member[id] == True and bigip[id] == master
+  register: result
+# Unfortunately Bad Request is returned when the route is alredy in the router
+  failed_when:
+    - not result|success
+    - "'Bad Request' not in result.stderr"
+  tags:
+    - add
+
+# This must be done before we start doing any action in the BIG-IP
+
+- name: "Set this customer network as a local fact stored in BIG-IPs"
+  shell: |
+    mkdir -p /config/facts.d
+    touch /config/facts.d/customers.fact
+    grep -q '\[ids\]' /config/facts.d/customers.fact 2>/dev/null || echo '[ids]' > /config/facts.d/customers.fact
+    grep -q '{{ segment_id }}: {{ traffic_group }}' /config/facts.d/customers.fact || echo '{{ segment_id }}: {{ traffic_group }}' >> /config/facts.d/customers.fact
+  when: bigip_cluster_member[id] == True
+  tags:
+    - add
+
+- name: "Deploy the iApp template customer-network-rd"
+  delegate_to: localhost
+  bigip_iapp_template:
+    content: "{{ lookup('template', 'customer-network-rd.tmpl') }}"
+    # force: true 
+    server: "{{ bigip[id] }}"
+    state: "present"
+  when: bigip_cluster_member[id] == True
+  tags:
+    - add
+
+# TODO: Is it possible to make this more quiet?
+
+- name: "Initialize customer self-IP address list"
+  set_fact:
+    self_vlan: ""
+  tags:
+    - add
+
+- name: "Setup customer self-IP addresses list"
+  set_fact:
+    self_vlan: "{{ self_vlan + item.ansible_facts.openstack_ports[0].fixed_ips[0].ip_address }}%{{ segment_id }}/24 "
+  with_items: "{{ customer_ports.results }}"
+  tags:
+    - add
+
+- name: "Deploy in the BIG-IP the VLAN for the customer with customer-network-rd iApp template"
+  delegate_to: localhost
+  bigip_iapp_service:
+    server: "{{ bigip[id] }}"
+    name: "customer-network-{{ segment_id }}"
+    template: customer-network-rd
+    traffic_group: "none"
+#    traffic_group: "traffic-group-{{ traffic_group }}"
+#    force: true 
+    state: present
+    parameters:
+      variables:
+         - name: "local__bigip_names"
+           value: "{{ bigip_names | join(' ') }}"
+         - name: "var__provider_interface"
+           value: "{{ bigip_provider_interface }}"
+         - name: "local__self_customer"
+           value: "{{ self_vlan }}"
+         - name: "var__segment_id"
+           value: "{{ segment_id }}"
+  when: bigip_cluster_member[id] == True
+  tags:
+    - add
+

@@ -1,0 +1,3 @@
+Needs to be modified manually to assign tg-load because of traffic-group-1 is already created
+Needs to be created disabling strict updates
+Unfortunately cannot have format %02d padding because it would not be homogeneous when applying it to all traffic groups: traffic-group-1 is the exception

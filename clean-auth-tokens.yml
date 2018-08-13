@@ -1,0 +1,18 @@
+---
+- hosts: bigip-cluster
+  gather_facts: false
+  max_fail_percentage: 0
+  environment:
+      F5_USER: "xxx"
+      F5_PASSWORD: "xxx"
+      F5_VALIDATE_CERTS: "false"
+      F5_SERVER_PORT: 443
+      OS_TENANT_NAME: "services"
+      OS_USERNAME: "xxx"
+      OS_PASSWORD: "xxx"
+      OS_AUTH_URL: "http://10.105.213.3:5000/"
+  vars:
+     os_config_file: "{{ lookup('env', 'OS_CLIENT_CONFIG_FILE') }}"
+  roles: 
+    - setfacts
+    - clean-bigip-auth-tokens

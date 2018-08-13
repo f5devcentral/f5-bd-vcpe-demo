@@ -1,0 +1,14 @@
+---
+- hosts: "{{ master }}"
+  gather_facts: false
+  max_fail_percentage: 0
+  environment:
+      F5_USER: "xxx"
+      F5_PASSWORD: "xxx"
+      F5_VALIDATE_CERTS: "false"
+      F5_SERVER_PORT: 443
+  roles:
+    - setfacts
+    - clean-bigip-auth-tokens
+    - sync-to-group
+

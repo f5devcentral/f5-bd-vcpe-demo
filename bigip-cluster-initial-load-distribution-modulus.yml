@@ -1,0 +1,46 @@
+---
+- hosts: bigip-cluster
+  gather_facts: false
+  max_fail_percentage: 0
+  environment:
+      F5_USER: "xxx"
+      F5_PASSWORD: "xxx"
+      F5_VALIDATE_CERTS: "false"
+      F5_SERVER_PORT: 443
+  vars:
+     host_count: "{{ groups['bigip-cluster'] | length }}"
+#  roles: 
+#    - setfacts
+#    - clean-bigip-auth-tokens
+  tasks:
+    - name: "Create dictionary with the corresponding traffic-groups for each BIG-IP"
+      set_fact:
+         actives: "{{ actives|default({}) | combine({ item.key: bigip_names[(item.key|int) % (host_count|int)] }) }}"
+      with_dict: "{{ tg_load }}"
+
+#    - name: "Show dict"
+#      debug:
+#        msg: "{{ item.key }} {{ item.value }}"
+#      with_dict: "{{ actives}}"
+
+#    - name: "Check values"
+#      debug:
+#        msg: "run sys failover standby traffic-group traffic-group-{{item.key}} device {{ bigip_fqdn[item.value] }}"
+#      delegate_to: localhost
+#      with_dict: "{{ actives }}"
+
+#    - name: "Distribute traffic groups"
+#      bigip_command:
+#        server: "{{ bigip[id] }}"
+#        commands:
+#        - run sys failover standby traffic-group traffic-group-{{item.key}} device {{ bigip_fqdn[item.value] }}
+#      delegate_to: localhost
+#      with_dict: "{{ actives }}"
+
+# This cannot be run with bigip_command because we run out of tokens
+
+    - name: "Distribute traffic groups"
+      shell: |
+        tmsh run sys failover standby traffic-group traffic-group-{{item.key}} device {{ bigip_fqdn[item.value] }}
+      with_dict: "{{ actives }}"
+

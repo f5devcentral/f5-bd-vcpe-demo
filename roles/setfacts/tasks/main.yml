@@ -1,0 +1,70 @@
+---
+
+- name: "Initialize local facts stored in BIG-IPs if not initialized already"
+  shell: |
+    mkdir -p /config/facts.d
+    touch /config/facts.d/customers.fact
+    grep -q '\[ids\]' /config/facts.d/customers.fact 2>/dev/null || echo '[ids]' > /config/facts.d/customers.fact
+  when: bigip_cluster_member[id] == True
+  tags:
+    - add
+
+- name: Setup ansible_env and local facts from /config/facts.d
+  delegate_to: "{{ master }}"
+  setup:
+#    filter: ansible_env
+    fact_path: /config/facts.d
+  retries: 10
+  delay: 5
+  register: result
+  until: result | success
+  ignore_errors: no
+  tags:
+    - always
+
+#- name: Setting dictionary variable bigip_cluster_member from survey
+#  set_fact: 
+#    bigip_cluster_member: "{{ bigip_cluster_member_txt | from_yaml }}"
+#  tags:
+#    - add
+#    - del
+
+#- name: Setting dictionary variable bigip_cluster_member up from defaults
+#  set_fact:
+#    bigip_cluster_member: "{{ bigip_cluster_member_dflt }}"
+#  when: bigip_cluster_member_txt == ""
+#  tags:
+#    - add
+#
+
+#- name: Show cluster membership
+#  debug:
+#    msg: "{{ bigip_cluster_member[id] }}"
+#  tags:
+#    - add
+#    - del
+#
+#- name: Show cluster capacity
+#  debug:
+#    msg: "{{ bigip_capacity[id] }}"
+#  tags:
+#    - add
+#    - del
+#
+#- name: Show traffic-groups load
+#  debug:
+#    msg: "{{ tg_load }}"
+#  when: bigip[id] == master
+#  tags:
+#    - add
+#    - del
+#
+#- name: Show customer VLANs defined in master
+#  debug:
+#    msg: "{{ ansible_local.customers | default('No customers configured') }}"
+#  when: bigip[id] == master
+#  tags:
+#    - add
+#    - del
+
+

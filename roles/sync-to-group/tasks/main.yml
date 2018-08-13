@@ -1,0 +1,20 @@
+- name: "config-sync from master to ha-group"
+  bigip_command:
+      server: "{{ master }}"
+      commands:
+      - save sys config
+# When changing bigip local config we don't know which one will get the last update hence we need to do a force so the system doesn't reject sync'ing
+      - run cm config-sync to-group ha-group force-full-load-push
+  delegate_to: localhost
+  when: bigip[id] == master
+  tags:
+    - always
+
+- name: Check sync and failover status
+  include_role:
+    name: sync-check
+  delegate_to: localhost
+  when: bigip[id] == master
+  tags:
+    - always
+

@@ -1,0 +1,32 @@
+
+
+- name: Check sync and failover status
+  bigip_command:
+    server: "{{ master }}"
+    commands:
+    - show cm sync-status
+    wait_for:
+       - result[0] contains "green"
+    retries: 60
+    match: all
+  delegate_to: localhost
+  when: bigip[id] == master
+#  ignore_errors: yes
+#  register: stdout
+  tags:
+    - always
+
+
+# When there is no failure in the previous command, for some reason the msg cannot be shown (at least sometimes) with tower GUI but it always can with the CLI
+# When there is a failure only the exception is shown which is not very helpful
+#
+#- name: Check result
+#  debug:
+#    msg: "{{ stdout }}"
+#  delegate_to: localhost
+#  when: bigip[id] == master
+#  failed_when: "stdout.failed == true"
+#  tags:
+#    - always
+#
+

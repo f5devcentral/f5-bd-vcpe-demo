@@ -1,0 +1,21 @@
+---
+- hosts: localhost
+  gather_facts: false
+  max_fail_percentage: 0
+  environment:
+      OS_TENANT_NAME: "service"
+      OS_USERNAME: "xxx"
+      OS_PASSWORD: "xxx"
+      OS_AUTH_URL: "http://10.105.211.69:5000/v2.0"
+
+  tasks:
+
+# This also dettaches it from the VM
+  - name: "Delete testpoint access port for customer {{ customer_id }}"
+    os_port:
+      state: absent
+      name: "testpoint-customer-{{ customer_id }}"
+      network: "customer-access-{{ customer_id }}"
+    run_once: true
+
+

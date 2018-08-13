@@ -1,0 +1,1203 @@
+cli admin-partitions {
+    update-partition Common
+}
+sys application template DNSTunnelMitigationV7 {
+    actions {
+        definition {
+            html-help {
+            }
+            implementation {
+                # F5 DNS Tunnel Mitigation
+# Initial Version Developer: Varun Uppal
+# Professional Services EMEA - 10/02/2016
+# updated by: Simon Kowallik
+# Professional Services EMEA - 19/02/2016
+# v7
+###################################################################################################################################################
+#
+#   INIT_MACRO
+#
+#   This function initialises all the variables necessary for DNS irule. To support multiple deployment per machine, application name are used in some
+#   of the variables.
+#   The name of the applications need to remain short.
+###################################################################################################################################################
+set init_macro {priority 100
+    when RULE_INIT {
+        log local0. "<%=$app__name%> _Initializing counter variables for DNS tunnel mitigation"
+        array set static::<%=$app__name%>_cl_conns { }
+        array set static::<%=$app__name%>_cl_resols { }
+        array set static::<%=$app__name%>_cl_long_reqs { }
+        array set static::<%=$app__name%>_cl_un_qtyps { }
+        array set static::<%=$app__name%>_cl_nxdoms { }
+        array set static::<%=$app__name%>_cl_long_resps { }
+        array set static::<%=$app__name%>_blacklist { }
+        if { [array exists static::<%=$app__name%>_subs_ip] } {
+            unset -nocomplain static::<%=$app__name%>_subs_ip
+        }
+        array set static::<%=$app__name%>_subs_ip { }
+        <% if { $::genSettings__blackListTime > 0 } { %>
+            set this_second [clock second]
+            set tmm_num [TMM::cmp_unit]
+            set blade_id [TMM::cmp_group]
+            set static::<%=$app__name%>_sizeLogTime [expr { $this_second + <%=$::genSettings__blackListTime%> }]
+        <% } %>
+        after <%=$::genSettings__filterTime%> -periodic {
+            unset -nocomplain static::<%=$app__name%>_cl_conns
+            unset -nocomplain static::<%=$app__name%>_cl_resols
+            unset -nocomplain static::<%=$app__name%>_cl_long_reqs
+            unset -nocomplain static::<%=$app__name%>_cl_un_qtyps
+            unset -nocomplain static::<%=$app__name%>_cl_nxdoms
+            unset -nocomplain static::<%=$app__name%>_cl_long_resps
+            set this_second [clock second]
+            <% if { $::genSettings__blackListTime > 0 } { %>
+                if { $static::<%=$app__name%>_sizeLogTime < $this_second } {
+                    set static::<%=$app__name%>_sizeLogTime [expr { $this_second + <%=$::genSettings__blackListTime%> }]
+                    set blackListSize [array size static::<%=$app__name%>_blacklist]
+                    ISTATS::set "ltm.rule <%=$app__path%>/init_dns_tun_mit s tot.blist.$blade_id.$tmm_num" $blackListSize
+                }
+            <% } %>
+            foreach {key value} [array get static::<%=$app__name%>_blacklist] {
+                if { $value < $this_second } {
+                    array unset static::<%=$app__name%>_blacklist $key
+                }
+            }
+        }
+    }
+}
+###################################################################################################################################################
+#
+#   F5 DNS Tunnel Mitigation Library
+#
+#   Contains all the necessary procedures used for Tunnel Mitigation iRule Logging and Blacklisting
+###################################################################################################################################################
+set vfdnslib_macro {priority 200
+    proc ip2hex {ip} {
+        set octets [split $ip .]
+        binary scan [binary format c4 $octets] H8 hex
+        return 0x$hex
+    }
+    proc hex2ip {hex} {
+        set r {}
+        set bin [binary format I [expr {$hex}]]
+        binary scan $bin c4 octets
+        foreach octet $octets {
+            lappend r [expr {$octet & 0xFF}]
+        }
+        return [join $r .]
+    }
+    proc ceil {a b} { return [expr { ($a + $b + 1)/$b }] }
+    proc blacklisted {key} {
+        set this_second [clock second]
+        set static::<%=$app__name%>_blacklist({$key}) [expr { $this_second + <%=$::genSettings__penaltyTime%> }]
+        <% if { $::genSettings__enableDropping eq "Yes" } { %>
+            drop
+            event disable all
+        <% } %>
+    }
+    <% if { $::genSettings__enaReverseDnat eq "Yes" } { %>
+        proc findSubscriberIP {key} {
+            scan $key {%[^:]:%s} nat_ip nat_port
+            set nat_ip_hex [call <%=$app__path%>/vfdnslib::ip2hex $nat_ip]
+            set nat_ip_offset [expr { $nat_ip_hex - <%=$nat_lo_x%> }]
+            set nat_port_offset [expr { ($nat_ip_offset * <%=$ports_perip%>) + ($nat_port - <%=$::dnatSettings__startPort%>) }]
+            set sub_ip_hex [expr { <%=$cl_low_d%> + ($nat_port_offset / <%=$::dnatSettings__blocksize%>) }]
+            set sub_ip [call <%=$app__path%>/vfdnslib::hex2ip $sub_ip_hex]
+            return $sub_ip
+        }
+    <% } %>
+    proc log {log_info key} {
+        <% if { $::genSettings__enaReverseDnat eq "Yes" } { %>
+            if { ![info exists static::<%=$app__name%>_subs_ip({$key})] } {
+                set static::<%=$app__name%>_subs_ip({$key}) [call <%=$app__path%>/vfdnslib::findSubscriberIP $key]
+            }
+            set cl_info "($key)(Subscriber IP: $static::<%=$app__name%>_subs_ip({$key}))"
+            <% } else { %>
+            set cl_info "($key)"
+        <% } %>
+        <% if { $::genSettings__loggingConf eq "local" || $::genSettings__loggingConf eq "both"} { %>
+            log local0. "$log_info $cl_info"
+        <% } %>
+        <% if { $::genSettings__loggingConf eq "remote" || $::genSettings__loggingConf eq "both"} { %>
+            if { ![info exists hsl] } {
+                set hsl [HSL::open -proto UDP -pool SysLogPool]
+            }
+            HSL::send $hsl "<180> $log_info $cl_info"
+        <% } %>
+    }
+    proc logGen {log_line} {
+        <% if { $::genSettings__loggingConf eq "local" || $::genSettings__loggingConf eq "both"} { %>
+            log local0. "$log_line"
+        <% } %>
+        <% if { $::genSettings__loggingConf eq "remote" || $::genSettings__loggingConf eq "both"} { %>
+            if { ![info exists hsl] } {
+                set hsl [HSL::open -proto UDP -pool SysLogPool]
+            }
+            HSL::send $hsl "<180> $log_line"
+        <% } %>
+    }
+}
+###################################################################################################################################################
+#
+#   dnsTunMit_macro
+#
+#   This iRule processes the DNS requests and responses and takes appropriate action
+#
+###################################################################################################################################################
+set dnsTunMit_macro {when CLIENT_ACCEPTED {
+    <% if { "$::proto" eq "UDP" } { %>
+        <% if { $::genSettings__enaReverseDnat eq "Yes" } { %>
+            set key "[IP::remote_addr]:[expr {[UDP::client_port] | <%=$port_mask%>}]"
+            <% } else { %>
+            set key "[IP::remote_addr]"
+        <% } %>
+        <% } else { %>
+        <% if { $::genSettings__enaReverseDnat eq "Yes" } { %>
+            set key "[IP::remote_addr]:[expr {[TCP::client_port] | <%=$port_mask%>}]"
+            <% } else { %>
+            set key "[IP::remote_addr]"
+        <% } %>
+        ### Global Limit ###
+        # use VS Connection Limit for setting Global Limits
+        ### Client Connection Limit for TCP ###
+        if { [info exists static::<%=$app__name%>_cl_conns({$key})] } {
+            incr static::<%=$app__name%>_cl_conns({$key})
+            } else {
+            set static::<%=$app__name%>_cl_conns({$key}) 1
+        }
+        if { $static::<%=$app__name%>_cl_conns({$key}) > <%=$::dnsReqEnforce__perClientLim%> } {
+            set static::<%=$app__name%>_cl_conns({$key}) 0
+            <% if { $::WL__perClientWLconLimit ne "no_whitelist" } { %>
+                if { "" ne [class match -name -- [IP::client_addr] equals <%=$::WL__perClientWLconLimitDataGroup%>] } {
+                    <% if { $::WL__perClientWLconLimit eq "whitelist_log" } { %>
+                        call <%=$app__path%>/vfdnslib::log "Client Connection Limit Exceeded: whitelisted(per-client)" $key
+                    <% } %>
+                }
+                else {
+                    call <%=$app__path%>/vfdnslib::blacklisted $key
+                    <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                        call <%=$app__path%>/vfdnslib::log "Client Connection Limit Exceeded:" $key
+                    <% } %>
+                }
+                <% } else { %>
+                call <%=$app__path%>/vfdnslib::blacklisted $key
+                <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                    call <%=$app__path%>/vfdnslib::log "Client Connection Limit Exceeded:" $key
+                <% } %>
+            <% } %>
+        }
+    <% } %>
+}
+when DNS_REQUEST {
+    set qname [DNS::question name]
+    set qtype [DNS::question type]
+    <% if { $::whitelisting_enabled eq "1" } { %>
+        set qnamelc [string tolower $qname]
+    <% } %>
+    ### Blacklisted clients ###
+    if { [info exists static::<%=$app__name%>_blacklist({$key})] } {
+        call <%=$app__path%>/vfdnslib::blacklisted $key
+    }
+    ### 4b: Per Client Resolution Limit ###
+    if { [info exists static::<%=$app__name%>_cl_resols({$key})] } {
+        incr static::<%=$app__name%>_cl_resols({$key})
+        } else {
+        set static::<%=$app__name%>_cl_resols({$key}) 1
+    }
+    if { $static::<%=$app__name%>_cl_resols({$key}) > <%=$::dnsReqEnforce__maxResolvedLim%> } {
+        set static::<%=$app__name%>_cl_resols({$key}) 0
+        <% if { $::WL__globWhitelist ne "no_whitelist" } { %>
+            if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__globWhitelistDataGroup%>] } {
+                <% if { $::WL__globWhitelist eq "whitelist_log" } { %>
+                    call <%=$app__path%>/vfdnslib::log "Client Resolutions Limit Exceeded:<$qname> whitelisted(global)" $key
+                <% } %>
+                }<% if { $::WL__perClientWLresolLimit ne "no_whitelist" } { %>
+                elseif { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLresolLimitDataGroup%>] } {
+                    <% if { $::WL__perClientWLresolLimit eq "whitelist_log" } { %>
+                        call <%=$app__path%>/vfdnslib::log "Client Resolutions Limit Exceeded:<$qname> whitelisted(per-client)" $key
+                    <% } %>
+                }<% } %>
+                else {
+                    call <%=$app__path%>/vfdnslib::blacklisted $key
+                    <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                        call <%=$app__path%>/vfdnslib::log "Client Resolutions Limit Exceeded:" $key
+                    <% } %>
+                }
+                <% } else { %>
+                <% if { $::WL__perClientWLresolLimit ne "no_whitelist" } { %>
+                    if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLresolLimitDataGroup%>] } {
+                        <% if { $::WL__perClientWLresolLimit eq "whitelist_log" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Client Resolutions Limit Exceeded:<$qname> whitelisted(per-client)" $key
+                        <% } %>
+                    }
+                    else {
+                        call <%=$app__path%>/vfdnslib::blacklisted $key
+                        <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Client Resolutions Limit Exceeded:" $key
+                        <% } %>
+                    }
+                    <% } else { %>
+                    call <%=$app__path%>/vfdnslib::blacklisted $key
+                    <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                        call <%=$app__path%>/vfdnslib::log "Client Resolutions Limit Exceeded:" $key
+                    <% } %>
+                <% } %>
+        <% } %>
+    }
+    ### 5: Long Query Length Limit ###
+    if { [string length $qname] > <%=$::dnsReqEnforce__maxReqLen%> } {
+        if { [info exists static::<%=$app__name%>_cl_long_reqs({$key})] } {
+            incr static::<%=$app__name%>_cl_long_reqs({$key})
+            } else {
+            set static::<%=$app__name%>_cl_long_reqs({$key}) 1
+        }
+        if { $static::<%=$app__name%>_cl_long_reqs({$key}) > <%=$::dnsReqEnforce__longReqLim%> } {
+            set static::<%=$app__name%>_cl_long_reqs({$key}) 0
+            <% if { $::WL__globWhitelist ne "no_whitelist" } { %>
+                if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__globWhitelistDataGroup%>] } {
+                    <% if { $::WL__globWhitelist eq "whitelist_log" } { %>
+                        call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname> whitelisted(global)" $key
+                    <% } %>
+                    }<% if { $::WL__perClientWLlongQ ne "no_whitelist" } { %>
+                    elseif { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLlongQDataGroup%>] } {
+                        <% if { $::WL__perClientWLlongQ eq "whitelist_log" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname> whitelisted(per-client)" $key
+                        <% } %>
+                    }<% } %>
+                    else {
+                        call <%=$app__path%>/vfdnslib::blacklisted $key
+                        <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname> " $key
+                        <% } %>
+                    }
+                    <% } else { %>
+                    <% if { $::WL__perClientWLlongQ ne "no_whitelist" } { %>
+                        if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLlongQDataGroup%>] } {
+                            <% if { $::WL__perClientWLlongQ eq "whitelist_log" } { %>
+                                call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname> whitelisted(per-client)" $key
+                            <% } %>
+                        }
+                        else {
+                            call <%=$app__path%>/vfdnslib::blacklisted $key
+                            <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                                call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname> " $key
+                            <% } %>
+                        }
+                        <% } else { %>
+                        call <%=$app__path%>/vfdnslib::blacklisted $key
+                        <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname> " $key
+                        <% } %>
+                    <% } %>
+            <% } %>
+        }
+    }
+    ### 6: Unusual Query Type Limit ###
+    if { ($qtype eq "NULL") or ($qtype eq "TXT") or ($qtype eq "CNAME") or ($qtype eq "ANY") or ($qtype eq "WKS") } {
+        if { [info exists static::<%=$app__name%>_cl_un_qtyps({$key})] } {
+            incr static::<%=$app__name%>_cl_un_qtyps({$key})
+            } else {
+            set static::<%=$app__name%>_cl_un_qtyps({$key}) 1
+        }
+        if { $static::<%=$app__name%>_cl_un_qtyps({$key}) > <%=$::dnsReqEnforce__unusualReqLim%> } {
+            set static::<%=$app__name%>_cl_un_qtyps({$key}) 0
+            <% if { $::WL__globWhitelist ne "no_whitelist" } { %>
+                if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__globWhitelistDataGroup%>] } {
+                    <% if { $::WL__globWhitelist eq "whitelist_log" } { %>
+                        call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname>;<$qtype> whitelisted(global)" $key
+                    <% } %>
+                    }<% if { $::WL__perClientWLunusualQ ne "no_whitelist" } { %>
+                    elseif { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLunusualQDataGroup%>] } {
+                        <% if { $::WL__perClientWLunusualQ eq "whitelist_log" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname>;<$qtype> whitelisted(per-client)" $key
+                        <% } %>
+                    }<% } %>
+                    else {
+                        call <%=$app__path%>/vfdnslib::blacklisted $key
+                        <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname>;<$qtype>" $key
+                        <% } %>
+                    }
+                    <% } else { %>
+                    <% if { $::WL__perClientWLunusualQ ne "no_whitelist" } { %>
+                        if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLunusualQDataGroup%>] } {
+                            <% if { $::WL__perClientWLunusualQ eq "whitelist_log" } { %>
+                                call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname>;<$qtype> whitelisted(per-client)" $key
+                            <% } %>
+                        }
+                        else {
+                            call <%=$app__path%>/vfdnslib::blacklisted $key
+                            <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                                call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname>;<$qtype>" $key
+                            <% } %>
+                        }
+                        <% } else { %>
+                        call <%=$app__path%>/vfdnslib::blacklisted $key
+                        <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname>;<$qtype>" $key
+                        <% } %>
+                    <% } %>
+            <% } %>
+        }
+    }
+}
+when DNS_RESPONSE {
+    ### 7: Per-client NXDOMAIN Limit ###
+    set rcode [DNS::header rcode]
+    if { $rcode eq "NXDOMAIN" || $rcode eq "SERVFAIL"} {
+        if { [info exists static::<%=$app__name%>_cl_nxdoms({$key})] } {
+            incr static::<%=$app__name%>_cl_nxdoms({$key})
+            } else {
+            set static::<%=$app__name%>_cl_nxdoms({$key}) 1
+        }
+        if { $static::<%=$app__name%>_cl_nxdoms({$key}) > <%=$::dnsRespEnforce__nxdomRespLim%> } {
+            set static::<%=$app__name%>_cl_nxdoms({$key}) 0
+            <% if { $::WL__globWhitelist ne "no_whitelist" } { %>
+                if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__globWhitelistDataGroup%>] } {
+                    <% if { $::WL__globWhitelist eq "whitelist_log" } { %>
+                        call <%=$app__path%>/vfdnslib::log "NX Domain Limit Exceeded:<$qname> whitelisted(global)" $key
+                    <% } %>
+                    }<% if { $::WL__perClientWLnxdomain ne "no_whitelist" } { %>
+                    elseif { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLnxdomainDataGroup%>] } {
+                        <% if { $::WL__perClientWLnxdomain eq "whitelist_log" } { %>
+                            call <%=$app__path%>/vfdnslib::log "NX Domain Limit Exceeded:<$qname> whitelisted(per-client)" $key
+                        <% } %>
+                    }<% } %>
+                    else {
+                        call <%=$app__path%>/vfdnslib::blacklisted $key
+                        <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                            call <%=$app__path%>/vfdnslib::log "NX Domain Limit Exceeded:<$qname>" $key
+                        <% } %>
+                    }
+                    <% } else { %>
+                    <% if { $::WL__perClientWLnxdomain ne "no_whitelist" } { %>
+                        if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLnxdomainDataGroup%>] } {
+                            <% if { $::WL__perClientWLnxdomain eq "whitelist_log" } { %>
+                                call <%=$app__path%>/vfdnslib::log "NX Domain Limit Exceeded:<$qname> whitelisted(per-client)" $key
+                            <% } %>
+                        }
+                        else {
+                            call <%=$app__path%>/vfdnslib::blacklisted $key
+                            <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                                call <%=$app__path%>/vfdnslib::log "NX Domain Limit Exceeded:<$qname>" $key
+                            <% } %>
+                        }
+                        <% } else { %>
+                        call <%=$app__path%>/vfdnslib::blacklisted $key
+                        <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                            call <%=$app__path%>/vfdnslib::log "NX Domain Limit Exceeded:<$qname>" $key
+                        <% } %>
+                    <% } %>
+            <% } %>
+        }
+    }
+    ### 8: Per-client response length limit ###
+    set length [DNS::len]
+    if { $length > <%=$::dnsRespEnforce__maxRespLen%> } {
+        if { [info exists static::<%=$app__name%>_cl_long_resps({$key})] } {
+            incr static::<%=$app__name%>_cl_long_resps({$key})
+            } else {
+            set static::<%=$app__name%>_cl_long_resps({$key}) 1
+        }
+        if { $static::<%=$app__name%>_cl_long_resps({$key}) > <%=$::dnsRespEnforce__longRespLim%> } {
+            set static::<%=$app__name%>_cl_long_resps({$key}) 0
+            <% if { $::WL__globWhitelist ne "no_whitelist" } { %>
+                if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__globWhitelistDataGroup%>] } {
+                    <% if { $::WL__globWhitelist eq "whitelist_log" } { %>
+                        call <%=$app__path%>/vfdnslib::log "Response Length Limit Exceeded:<$qname>;<$length> whitelisted(global)" $key
+                    <% } %>
+                    }<% if { $::WL__perClientWLlongResp ne "no_whitelist" } { %>
+                    elseif { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLlongRespDataGroup%>] } {
+                        <% if { $::WL__perClientWLlongResp eq "whitelist_log" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Response Length Limit Exceeded:<$qname>;<$length> whitelisted(per-client)" $key
+                        <% } %>
+                    }<% } %>
+                    else {
+                        call <%=$app__path%>/vfdnslib::blacklisted $key
+                        <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Response Length Limit Exceeded:<$qname>;<$length>" $key
+                        <% } %>
+                    }
+                    <% } else { %>
+                    <% if { $::WL__perClientWLlongResp ne "no_whitelist" } { %>
+                        if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLlongRespDataGroup%>] } {
+                            <% if { $::WL__perClientWLlongResp eq "whitelist_log" } { %>
+                                call <%=$app__path%>/vfdnslib::log "Response Length Limit Exceeded:<$qname>;<$length> whitelisted(per-client)" $key
+                            <% } %>
+                        }
+                        else {
+                            call <%=$app__path%>/vfdnslib::blacklisted $key
+                            <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                                call <%=$app__path%>/vfdnslib::log "Response Length Limit Exceeded:<$qname>;<$length>" $key
+                            <% } %>
+                        }
+                        <% } else { %>
+                        call <%=$app__path%>/vfdnslib::blacklisted $key
+                        <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Response Length Limit Exceeded:<$qname>;<$length>" $key
+                        <% } %>
+                    <% } %>
+            <% } %>
+        }
+    }
+}
+}
+###################################################################################################################################################
+#
+#   dnsTunMitDlb_macro
+#
+#   This iRule processes the DNS requests using LB_SELECTED event and responses and takes appropriate action
+#   To be used for Virtual Servers with associated Pool and UDP Datagram Loadbalancing profile
+###################################################################################################################################################
+set dnsTunMitDlb_macro {when CLIENT_ACCEPTED {
+    <% if { "$::proto" eq "UDP" } { %>
+        <% if { $::genSettings__enaReverseDnat eq "Yes" } { %>
+            set key "[IP::remote_addr]:[expr {[UDP::client_port] | <%=$port_mask%>}]"
+            <% } else { %>
+            set key "[IP::remote_addr]"
+        <% } %>
+        <% } else { %>
+        <% if { $::genSettings__enaReverseDnat eq "Yes" } { %>
+            set key "[IP::remote_addr]:[expr {[TCP::client_port] | <%=$port_mask%>}]"
+            <% } else { %>
+            set key "[IP::remote_addr]"
+        <% } %>
+        ### Global Limit ###
+        # use VS Connection Limit for setting Global Limits
+        ### Client Connection Limit for TCP ###
+        if { [info exists static::<%=$app__name%>_cl_conns({$key})] } {
+            incr static::<%=$app__name%>_cl_conns({$key})
+            } else {
+            set static::<%=$app__name%>_cl_conns({$key}) 1
+        }
+        if { $static::<%=$app__name%>_cl_conns({$key}) > <%=$::dnsReqEnforce__perClientLim%> } {
+            set static::<%=$app__name%>_cl_conns({$key}) 0
+            <% if { $::WL__perClientWLconLimit ne "no_whitelist" } { %>
+                if { "" ne [class match -name -- [IP::client_addr] equals <%=$::WL__perClientWLconLimitDataGroup%>] } {
+                    <% if { $::WL__perClientWLconLimit eq "whitelist_log" } { %>
+                        call <%=$app__path%>/vfdnslib::log "Client Connection Limit Exceeded: whitelisted(per-client)" $key
+                    <% } %>
+                }
+                else {
+                    call <%=$app__path%>/vfdnslib::blacklisted $key
+                    <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                        call <%=$app__path%>/vfdnslib::log "Client Connection Limit Exceeded:" $key
+                    <% } %>
+                }
+                <% } else { %>
+                call <%=$app__path%>/vfdnslib::blacklisted $key
+                <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                    call <%=$app__path%>/vfdnslib::log "Client Connection Limit Exceeded:" $key
+                <% } %>
+            <% } %>
+        }
+    <% } %>
+}
+when DNS_REQUEST {
+    set qname [DNS::question name]
+    set qtype [DNS::question type]
+    ### Blacklisted clients ###
+    if { [info exists static::<%=$app__name%>_blacklist({$key})] } {
+        call <%=$app__path%>/vfdnslib::blacklisted $key
+    }
+    set resolved 0
+}
+when LB_SELECTED {
+    set resolved 1
+    <% if { $::whitelisting_enabled eq "1" } { %>
+        set qnamelc [string tolower $qname]
+    <% } %>
+    ### 4b: Per Client Resolution Limit ###
+    if { [info exists static::<%=$app__name%>_cl_resols({$key})] } {
+        incr static::<%=$app__name%>_cl_resols({$key})
+        } else {
+        set static::<%=$app__name%>_cl_resols({$key}) 1
+    }
+    if { $static::<%=$app__name%>_cl_resols({$key}) > <%=$::dnsReqEnforce__maxResolvedLim%> } {
+        set static::<%=$app__name%>_cl_resols({$key}) 0
+        <% if { $::WL__globWhitelist ne "no_whitelist" } { %>
+            if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__globWhitelistDataGroup%>] } {
+                <% if { $::WL__globWhitelist eq "whitelist_log" } { %>
+                    call <%=$app__path%>/vfdnslib::log "Client Resolutions Limit Exceeded:<$qname> whitelisted(global)" $key
+                <% } %>
+                }<% if { $::WL__perClientWLresolLimit ne "no_whitelist" } { %>
+                elseif { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLresolLimitDataGroup%>] } {
+                    <% if { $::WL__perClientWLresolLimit eq "whitelist_log" } { %>
+                        call <%=$app__path%>/vfdnslib::log "Client Resolutions Limit Exceeded:<$qname> whitelisted(per-client)" $key
+                    <% } %>
+                }<% } %>
+                else {
+                    call <%=$app__path%>/vfdnslib::blacklisted $key
+                    <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                        call <%=$app__path%>/vfdnslib::log "Client Resolutions Limit Exceeded:" $key
+                    <% } %>
+                }
+                <% } else { %>
+                <% if { $::WL__perClientWLresolLimit ne "no_whitelist" } { %>
+                    if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLresolLimitDataGroup%>] } {
+                        <% if { $::WL__perClientWLresolLimit eq "whitelist_log" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Client Resolutions Limit Exceeded:<$qname> whitelisted(per-client)" $key
+                        <% } %>
+                    }
+                    else {
+                        call <%=$app__path%>/vfdnslib::blacklisted $key
+                        <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Client Resolutions Limit Exceeded:" $key
+                        <% } %>
+                    }
+                    <% } else { %>
+                    call <%=$app__path%>/vfdnslib::blacklisted $key
+                    <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                        call <%=$app__path%>/vfdnslib::log "Client Resolutions Limit Exceeded:" $key
+                    <% } %>
+                <% } %>
+        <% } %>
+    }
+    ### 5: Long Query Length Limit ###
+    if { [string length $qname] > <%=$::dnsReqEnforce__maxReqLen%> } {
+        if { [info exists static::<%=$app__name%>_cl_long_reqs({$key})] } {
+            incr static::<%=$app__name%>_cl_long_reqs({$key})
+            } else {
+            set static::<%=$app__name%>_cl_long_reqs({$key}) 1
+        }
+        if { $static::<%=$app__name%>_cl_long_reqs({$key}) > <%=$::dnsReqEnforce__longReqLim%> } {
+            set static::<%=$app__name%>_cl_long_reqs({$key}) 0
+            <% if { $::WL__globWhitelist ne "no_whitelist" } { %>
+                if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__globWhitelistDataGroup%>] } {
+                    <% if { $::WL__globWhitelist eq "whitelist_log" } { %>
+                        call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname> whitelisted(global)" $key
+                    <% } %>
+                    }<% if { $::WL__perClientWLlongQ ne "no_whitelist" } { %>
+                    elseif { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLlongQDataGroup%>] } {
+                        <% if { $::WL__perClientWLlongQ eq "whitelist_log" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname> whitelisted(per-client)" $key
+                        <% } %>
+                    }<% } %>
+                    else {
+                        call <%=$app__path%>/vfdnslib::blacklisted $key
+                        <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname> " $key
+                        <% } %>
+                    }
+                    <% } else { %>
+                    <% if { $::WL__perClientWLlongQ ne "no_whitelist" } { %>
+                        if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLlongQDataGroup%>] } {
+                            <% if { $::WL__perClientWLlongQ eq "whitelist_log" } { %>
+                                call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname> whitelisted(per-client)" $key
+                            <% } %>
+                        }
+                        else {
+                            call <%=$app__path%>/vfdnslib::blacklisted $key
+                            <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                                call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname> " $key
+                            <% } %>
+                        }
+                        <% } else { %>
+                        call <%=$app__path%>/vfdnslib::blacklisted $key
+                        <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname> " $key
+                        <% } %>
+                    <% } %>
+            <% } %>
+        }
+    }
+    ### 6: Unusual Query Type Limit ###
+    if { ($qtype eq "NULL") or ($qtype eq "TXT") or ($qtype eq "CNAME") or ($qtype eq "ANY") or ($qtype eq "WKS") } {
+        if { [info exists static::<%=$app__name%>_cl_un_qtyps({$key})] } {
+            incr static::<%=$app__name%>_cl_un_qtyps({$key})
+            } else {
+            set static::<%=$app__name%>_cl_un_qtyps({$key}) 1
+        }
+        if { $static::<%=$app__name%>_cl_un_qtyps({$key}) > <%=$::dnsReqEnforce__unusualReqLim%> } {
+            set static::<%=$app__name%>_cl_un_qtyps({$key}) 0
+            <% if { $::WL__globWhitelist ne "no_whitelist" } { %>
+                if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__globWhitelistDataGroup%>] } {
+                    <% if { $::WL__globWhitelist eq "whitelist_log" } { %>
+                        call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname>;<$qtype> whitelisted(global)" $key
+                    <% } %>
+                    }<% if { $::WL__perClientWLunusualQ ne "no_whitelist" } { %>
+                    elseif { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLunusualQDataGroup%>] } {
+                        <% if { $::WL__perClientWLunusualQ eq "whitelist_log" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname>;<$qtype> whitelisted(per-client)" $key
+                        <% } %>
+                    }<% } %>
+                    else {
+                        call <%=$app__path%>/vfdnslib::blacklisted $key
+                        <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname>;<$qtype>" $key
+                        <% } %>
+                    }
+                    <% } else { %>
+                    <% if { $::WL__perClientWLunusualQ ne "no_whitelist" } { %>
+                        if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLunusualQDataGroup%>] } {
+                            <% if { $::WL__perClientWLunusualQ eq "whitelist_log" } { %>
+                                call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname>;<$qtype> whitelisted(per-client)" $key
+                            <% } %>
+                        }
+                        else {
+                            call <%=$app__path%>/vfdnslib::blacklisted $key
+                            <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                                call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname>;<$qtype>" $key
+                            <% } %>
+                        }
+                        <% } else { %>
+                        call <%=$app__path%>/vfdnslib::blacklisted $key
+                        <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Client Long Request Limit Exceeded:<$qname>;<$qtype>" $key
+                        <% } %>
+                    <% } %>
+            <% } %>
+        }
+    }
+}
+when DNS_RESPONSE {
+    if {$resolved == 1} {
+        ### 7: Per-client NXDOMAIN Limit ###
+        set rcode [DNS::header rcode]
+        if { $rcode eq "NXDOMAIN" || $rcode eq "SERVFAIL"} {
+            if { [info exists static::<%=$app__name%>_cl_nxdoms({$key})] } {
+                incr static::<%=$app__name%>_cl_nxdoms({$key})
+                } else {
+                set static::<%=$app__name%>_cl_nxdoms({$key}) 1
+            }
+            if { $static::<%=$app__name%>_cl_nxdoms({$key}) > <%=$::dnsRespEnforce__nxdomRespLim%> } {
+                set static::<%=$app__name%>_cl_nxdoms({$key}) 0
+                <% if { $::WL__globWhitelist ne "no_whitelist" } { %>
+                    if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__globWhitelistDataGroup%>] } {
+                        <% if { $::WL__globWhitelist eq "whitelist_log" } { %>
+                            call <%=$app__path%>/vfdnslib::log "NX Domain Limit Exceeded:<$qname> whitelisted(global)" $key
+                        <% } %>
+                        }<% if { $::WL__perClientWLnxdomain ne "no_whitelist" } { %>
+                        elseif { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLnxdomainDataGroup%>] } {
+                            <% if { $::WL__perClientWLnxdomain eq "whitelist_log" } { %>
+                                call <%=$app__path%>/vfdnslib::log "NX Domain Limit Exceeded:<$qname> whitelisted(per-client)" $key
+                            <% } %>
+                        }<% } %>
+                        else {
+                            call <%=$app__path%>/vfdnslib::blacklisted $key
+                            <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                                call <%=$app__path%>/vfdnslib::log "NX Domain Limit Exceeded:<$qname>" $key
+                            <% } %>
+                        }
+                        <% } else { %>
+                        <% if { $::WL__perClientWLnxdomain ne "no_whitelist" } { %>
+                            if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLnxdomainDataGroup%>] } {
+                                <% if { $::WL__perClientWLnxdomain eq "whitelist_log" } { %>
+                                    call <%=$app__path%>/vfdnslib::log "NX Domain Limit Exceeded:<$qname> whitelisted(per-client)" $key
+                                <% } %>
+                            }
+                            else {
+                                call <%=$app__path%>/vfdnslib::blacklisted $key
+                                <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                                    call <%=$app__path%>/vfdnslib::log "NX Domain Limit Exceeded:<$qname>" $key
+                                <% } %>
+                            }
+                            <% } else { %>
+                            call <%=$app__path%>/vfdnslib::blacklisted $key
+                            <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                                call <%=$app__path%>/vfdnslib::log "NX Domain Limit Exceeded:<$qname>" $key
+                            <% } %>
+                        <% } %>
+                <% } %>
+            }
+        }
+        ### 8: Per-client response length limit ###
+        set length [DNS::len]
+        if { $length > <%=$::dnsRespEnforce__maxRespLen%> } {
+            if { [info exists static::<%=$app__name%>_cl_long_resps({$key})] } {
+                incr static::<%=$app__name%>_cl_long_resps({$key})
+                } else {
+                set static::<%=$app__name%>_cl_long_resps({$key}) 1
+            }
+            if { $static::<%=$app__name%>_cl_long_resps({$key}) > <%=$::dnsRespEnforce__longRespLim%> } {
+                set static::<%=$app__name%>_cl_long_resps({$key}) 0
+                <% if { $::WL__globWhitelist ne "no_whitelist" } { %>
+                    if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__globWhitelistDataGroup%>] } {
+                        <% if { $::WL__globWhitelist eq "whitelist_log" } { %>
+                            call <%=$app__path%>/vfdnslib::log "Response Length Limit Exceeded:<$qname>;<$length> whitelisted(global)" $key
+                        <% } %>
+                        }<% if { $::WL__perClientWLlongResp ne "no_whitelist" } { %>
+                        elseif { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLlongRespDataGroup%>] } {
+                            <% if { $::WL__perClientWLlongResp eq "whitelist_log" } { %>
+                                call <%=$app__path%>/vfdnslib::log "Response Length Limit Exceeded:<$qname>;<$length> whitelisted(per-client)" $key
+                            <% } %>
+                        }<% } %>
+                        else {
+                            call <%=$app__path%>/vfdnslib::blacklisted $key
+                            <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                                call <%=$app__path%>/vfdnslib::log "Response Length Limit Exceeded:<$qname>;<$length>" $key
+                            <% } %>
+                        }
+                        <% } else { %>
+                        <% if { $::WL__perClientWLlongResp ne "no_whitelist" } { %>
+                            if { "" ne [class match -name -- $qnamelc ends_with <%=$::WL__perClientWLlongRespDataGroup%>] } {
+                                <% if { $::WL__perClientWLlongResp eq "whitelist_log" } { %>
+                                    call <%=$app__path%>/vfdnslib::log "Response Length Limit Exceeded:<$qname>;<$length> whitelisted(per-client)" $key
+                                <% } %>
+                            }
+                            else {
+                                call <%=$app__path%>/vfdnslib::blacklisted $key
+                                <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                                    call <%=$app__path%>/vfdnslib::log "Response Length Limit Exceeded:<$qname>;<$length>" $key
+                                <% } %>
+                            }
+                            <% } else { %>
+                            call <%=$app__path%>/vfdnslib::blacklisted $key
+                            <% if { $::genSettings__loggingConf ne "disabled" } { %>
+                                call <%=$app__path%>/vfdnslib::log "Response Length Limit Exceeded:<$qname>;<$length>" $key
+                            <% } %>
+                        <% } %>
+                <% } %>
+            }
+        }
+    }
+}
+}
+############## THOMAS HELOIN MACRO ENGINE FOR IRULES v1.2 ##############
+proc __line { text } {
+    if { [string range $text end-1 end] eq "\\ " } {
+        append ::s "[string range $text 0 end-1]\n"
+        } else {
+        append ::s "$text\n"
+    }
+}
+proc __inline { text } {
+    append ::s "$text"
+}
+proc transform { macro } {
+    foreach line [split $macro "\n"] {
+        if { [string match {*<%*} $line] } {
+            set x 0
+            while { 1 } {
+                if { $x == 0 && [string trim [string range $line 0 [expr {[string first "<%" $line $x] + 1}]]] eq "<%" } {
+                    append result "[string map [list "<%" "" "%>" ""] $line]\n"
+                    break
+                    } else {
+                    if { [string first "<%" $line $x] == -1 } {
+                        append result "__line [list [string range $line $x end]]\n"
+                        break
+                    }
+                    append result "__inline [list [string range $line $x [expr {[string first "<%" $line $x] - 1}]]]\n"
+                    set x [string first "<%" $line $x]
+                    if { [string range $line $x [expr {$x + 2}]] eq "<%=" } {
+                        append result "__inline [string range $line [expr {$x + 3}] [expr {[string first "%>" $line $x] - 1}]]\n"
+                        set x [expr {[string first "%>" $line $x] + 2}]
+                        } elseif { [string range $line $x [expr {$x + 1}]] eq "<%" } {
+                        set x [expr {[string first "<%" $line $x] + 2}]
+                        append result "[string range $line $x [expr {[string first "%>" $line $x] - 1}]]\n"
+                        set x [expr {[string first "%>" $line $x] + 2}]
+                        } else {
+                        incr x
+                    }
+                }
+            }
+            } elseif { ! ("[string trim $line]" starts_with "#") } {
+            append result "__line [list $line]\n"
+        }
+    }
+    return $result
+}
+proc expand { rule } {
+    set processor [interp create -safe]
+    interp share {} stdout $processor
+    interp alias $processor __line {} __line
+    interp alias $processor __inline {} __inline
+    foreach { global } [info globals *] {
+        if { [array exists ::$global] } {
+            interp eval $processor [list array set ::$global [array get ::$global]]
+            } else {
+            interp eval $processor [list set ::$global [set ::$global]]
+        }
+    }
+    foreach { var } { app_template_name app_name app_name_path app_template_action } { interp eval $processor namespace eval tmsh [list set $var [set tmsh::$var]] }
+    set ::s ""
+    interp eval $processor [transform $rule]
+    return $::s
+}
+############## THOMAS HELOIN MACRO ENGINE FOR IRULES v1.2 ##############
+########################################################################
+# ==============================================================
+set date [clock format [clock seconds] -format "%d/%m/%Y %T"]
+puts "====================== Start Build: $date ======================"
+set ::app__path [string range $tmsh::app_name_path 0 end-[string length "/$tmsh::app_name"]]
+set ::app__name "$tmsh::app_name"
+set init_rule [expand $init_macro]
+puts "====================== tmsh::create ltm rule init_dns_tun_mit ======================"
+puts "$init_rule"
+tmsh::create ltm rule init_dns_tun_mit $init_rule
+proc ip2hex {ip} {
+    set octets [split $ip .]
+    binary scan [binary format c4 $octets] H8 hex
+    return 0x$hex
+}
+if { $::genSettings__enaReverseDnat eq "Yes" } {
+    set max_port 65536
+    set ::port_mask [expr { $::dnatSettings__blocksize - 1 }]
+    set ::nat_lo_x [ip2hex $::dnatSettings__natLow]
+    set ::nat_hi_x [ip2hex $::dnatSettings__natHigh]
+    set ::nat_ips [expr { $::nat_hi_x - $::nat_lo_x + 1 }]
+    scan $::dnatSettings__subscriberPool {%[^/]/%s} sub_net sub_mask
+    set ::cl_low_d [expr { [ip2hex $sub_net] + 1 }]
+    set ::ports_perip [expr { $max_port - $::dnatSettings__startPort }]
+}
+puts "====================== crating whitelists ======================"
+if { $::WL__globWhitelist ne "no_whitelist" } {
+    if { $::WL__globWhitelistDataGroup eq "/#create_new#" } {
+        tmsh::create ltm data-group internal "/Common/${::app__name}_global_whitelist" type string
+        set ::WL__globWhitelistDataGroup "/Common/${::app__name}_global_whitelist"
+    }
+}
+if { $::WL__perClientWLresolLimit ne "no_whitelist" } {
+    if { $::WL__perClientWLresolLimitDataGroup eq "/#create_new#" } {
+        tmsh::create ltm data-group internal "/Common/${::app__name}_resolLimit_whitelist" type string
+        set ::WL__perClientWLresolLimitDataGroup "/Common/${::app__name}_resolLimit_whitelist"
+    }
+}
+if { $::WL__perClientWLnxdomain ne "no_whitelist" } {
+    if { $::WL__perClientWLnxdomainDataGroup eq "/#create_new#" } {
+        tmsh::create ltm data-group internal "/Common/${::app__name}_nxdomain_whitelist" type string
+        set ::WL__perClientWLnxdomainDataGroup "/Common/${::app__name}_nxdomain_whitelist"
+    }
+}
+if { $::WL__perClientWLunusualQ ne "no_whitelist" } {
+    if { $::WL__perClientWLunusualQDataGroup eq "/#create_new#" } {
+        tmsh::create ltm data-group internal "/Common/${::app__name}_unusualQuery_whitelist" type string
+        set ::WL__perClientWLunusualQDataGroup "/Common/${::app__name}_unusualQuery_whitelist"
+    }
+}
+if { $::WL__perClientWLlongResp ne "no_whitelist" } {
+    if { $::WL__perClientWLlongRespDataGroup eq "/#create_new#" } {
+        tmsh::create ltm data-group internal "/Common/${::app__name}_longResp_whitelist" type string
+        set ::WL__perClientWLlongRespDataGroup "/Common/${::app__name}_longResp_whitelist"
+    }
+}
+if { $::WL__perClientWLlongQ ne "no_whitelist" } {
+    if { $::WL__perClientWLlongQDataGroup eq "/#create_new#" } {
+        tmsh::create ltm data-group internal "/Common/${::app__name}_longQuery_whitelist" type string
+        set ::WL__perClientWLlongQDataGroup "/Common/${::app__name}_longQuery_whitelist"
+    }
+}
+if { $::WL__perClientWLconLimit ne "no_whitelist" } {
+    if { $::WL__perClientWLconLimitDataGroup eq "/#create_new#" } {
+        tmsh::create ltm data-group internal "/Common/${::app__name}_connLimit_whitelist" type ip
+        set ::WL__perClientWLconLimitDataGroup "/Common/${::app__name}_connLimit_whitelist"
+    }
+}
+set ::whitelisting_enabled 0
+if { ($::WL__globWhitelist ne "no_whitelist") or ($::WL__perClientWLconLimit ne "no_whitelist") or ($::WL__perClientWLlongQ ne "no_whitelist") or ($::WL__perClientWLunusualQ ne "no_whitelist") or ($::WL__perClientWLnxdomain ne "no_whitelist") or ($::WL__perClientWLresolLimit ne "no_whitelist") or ($::WL__perClientWLlongResp ne "no_whitelist") } {
+    set ::whitelisting_enabled 1
+}
+set lib [expand $vfdnslib_macro]
+puts "====================== tmsh::create ltm rule vfdnslib ======================"
+puts "$lib"
+tmsh::create ltm rule vfdnslib $lib
+set ::proto "TCP"
+set tunMit_tcp [expand $dnsTunMit_macro]
+#set tunMit_tcp [tmsh::expand_macro $dnsTunMit_macro]
+puts "====================== tmsh::create ltm rule tunMit_tcp ======================"
+puts "$tunMit_tcp"
+tmsh::create ltm rule dns_tunMit_tcp $tunMit_tcp
+set ::proto "UDP"
+if { $::genSettings__datagramLB eq "Yes" } {
+    set tunMit_udp [expand $dnsTunMitDlb_macro]
+    #set tunMit_udp [tmsh::expand_macro $dnsTunMitDlb_macro]
+    set ::virtualServers__vsNames $::virtualServers__vsNamesDGLB
+    } else {
+    set tunMit_udp [expand $dnsTunMit_macro]
+    #set tunMit_udp [tmsh::expand_macro $dnsTunMit_macro]
+}
+puts "====================== tmsh::create ltm rule tunMit_udp ======================"
+puts "$tunMit_udp"
+tmsh::create ltm rule dns_tunMit_udp $tunMit_udp
+set EMPTY_STRING "EMPTY_STRING_NO_VALUE_PRESENT"
+if { $::virtualServers__vsNames != $::EMPTY_STRING } {
+    set vs_list [split $::virtualServers__vsNames " "]
+    ## Iterate over the selected Virtuals
+    foreach vs $vs_list {
+        set protoconf [tmsh::list /ltm virtual $vs ip-protocol]
+        if { [string first "ip-protocol tcp" $protoconf] != -1 } {
+            set add_rule "$::app__path/dns_tunMit_tcp"
+            set add_rule_name "dns_tunMit_tcp"
+            } elseif { [string first "ip-protocol udp" $protoconf] != -1 } {
+            set add_rule "$::app__path/dns_tunMit_udp"
+            set add_rule_name "dns_tunMit_udp"
+        }
+        set newRulesList "{ $add_rule }"
+        set currRulesConf [exec tmsh list /ltm virtual $vs rules]
+        set currRulesConf [regsub -all {\s+} $currRulesConf " "]
+        set rulesStart [string first " \{ rules \{ " $currRulesConf]
+        if { $rulesStart != -1 } {
+        set rulesOffset [string length " \{ rules \{ "]
+        set rulesStart [expr {$rulesStart + $rulesOffset}]
+        set rulesEnd [string first " \}" $currRulesConf $rulesStart]
+        set currRulesList [string range $currRulesConf $rulesStart $rulesEnd]
+        if { [string first $add_rule $currRulesList] == -1 } {
+        if { [string first $add_rule_name $currRulesList] == -1 } {
+        set newRulesList "{ $add_rule $currRulesList }"
+        } else {
+        set newRulesList "{ $currRulesList }"
+        }
+        }
+        }
+        puts "====================== tmsh::modify ltm virtual $vs rules none ======================"
+        tmsh::modify ltm virtual $vs rules none
+        after 2000
+        puts "====================== tmsh::modify ltm virtual $vs rules $newRulesList ======================"
+        tmsh::modify ltm virtual $vs rules $newRulesList
+        puts "====================== tmsh::modify ltm virtual $vs rate-limit $::dnsReqEnforce__globalConnLim ======================"
+        tmsh::modify /ltm virtual $vs rate-limit $::dnsReqEnforce__globalConnLim
+        }
+        } else {
+        puts "No Virtual Selected to apply the iRule to!!"
+        }
+    #####################################################################################
+            }
+            macro {
+            }
+            presentation {
+                include "/Common/f5.apl_common"
+section intro {
+    message hello "This template supports configuring limits and other parameters for DNS tunnel mitigation"
+    message templateInfo "The template has been developed by F5 Professional Services EMEA to facilitate the deployment of DNS Tunnel Mitigation iRule and is to be only delivered by F5 PS Consultants"
+    message prereqs_1 "Before using this template to configure the BIG-IP system, please ensure that applicable Virtual Servers are already created"
+    message prereqs_2 "The iApp will generate the iRule based on the input parameters and apply iRule to selected Virtual Servers"
+    message prereqs_3 "Please ensure that appropriate profiles(UDP/TCP and DNS) have been applied to the relevant Virtual Servers"
+    message prereqs_4 "Please ensure that SysLogPool has been created for remote High Speed Logging"
+    message prereqs_5 "Please ensure that source based SP-Dag has been configured for external/client facing VLAN. SP-Dag and hence this iApp is incompatible with vCMP"
+    message prereqs_6 "The Reverse PBA-NAT should be enabled if a Juniper PBA-NAT device is deployed between BigIP and DNS clients. The reverse translation is based on algorithm published for JunOS v12.3"
+}
+section genSettings {
+    yesno enableDropping
+    string filterTime default "1000" required validator "NonNegativeNumber" display "small"
+    string penaltyTime default "10" required validator "NonNegativeNumber" display "small"
+    noyes enaReverseDnat
+    noyes datagramLB
+    string blackListTime default "0" required validator "NonNegativeNumber" display "small"
+    choice loggingConf default "Remote Only" display "large" {
+        "Remote Only" => "remote",
+        "Local Only" => "local",
+        "Remote and Local" => "both",
+        "Disabled" => "disabled"
+    }
+}
+section WL {
+    choice globWhitelist default "no_whitelist" display "large" {
+        "No Whitelist" => "no_whitelist",
+        "Whitelist with Logging" => "whitelist_log",
+        "Whitelist" => "whitelist"
+    }
+    optional ( globWhitelist != "no_whitelist" ) {
+        choice globWhitelistDataGroup display "xxlarge" default "/#create_new#" tcl {
+            package require iapp 1.1.0
+            return "Create new Data-Group\t/#create_new#\n[iapp::get_items ltm data-group]"
+        }
+    }
+    choice perClientWLconLimit default "No Whitelist" display "large" {
+        "No Whitelist" => "no_whitelist",
+        "Whitelist with Logging" => "whitelist_log",
+        "Whitelist" => "whitelist"
+    }
+    optional ( perClientWLconLimit != "no_whitelist" ) {
+        choice perClientWLconLimitDataGroup display "xxlarge" default "/#create_new#" tcl {
+            package require iapp 1.1.0
+            return "Create new Data-Group\t/#create_new#\n[iapp::get_items ltm data-group]"
+        }
+        message prereqs_1 "The >Per Client Connection Limit Whitelist< applies to subscriber IP addresses. The Global Whitelist is not applied to >Per Client Connection Limit<. The Data-Group must be of type IP-Address."
+    }
+    choice perClientWLresolLimit default "No Whitelist" display "large" {
+        "No Whitelist" => "no_whitelist",
+        "Whitelist with Logging" => "whitelist_log",
+        "Whitelist" => "whitelist"
+    }
+    optional ( perClientWLresolLimit != "no_whitelist" ) {
+        choice perClientWLresolLimitDataGroup display "xxlarge" default "/#create_new#" tcl {
+            package require iapp 1.1.0
+            return "Create new Data-Group\t/#create_new#\n[iapp::get_items ltm data-group]"
+        }
+    }
+    choice perClientWLlongQ default "No Whitelist" display "large" {
+        "No Whitelist" => "no_whitelist",
+        "Whitelist with Logging" => "whitelist_log",
+        "Whitelist" => "whitelist"
+    }
+    optional ( perClientWLlongQ != "no_whitelist" ) {
+        choice perClientWLlongQDataGroup display "xxlarge" default "/#create_new#" tcl {
+            package require iapp 1.1.0
+            return "Create new Data-Group\t/#create_new#\n[iapp::get_items ltm data-group]"
+        }
+    }
+    choice perClientWLunusualQ default "No Whitelist" display "large" {
+        "No Whitelist" => "no_whitelist",
+        "Whitelist with Logging" => "whitelist_log",
+        "Whitelist" => "whitelist"
+    }
+    optional ( perClientWLunusualQ != "no_whitelist" ) {
+        choice perClientWLunusualQDataGroup display "xxlarge" default "/#create_new#" tcl {
+            package require iapp 1.1.0
+            return "Create new Data-Group\t/#create_new#\n[iapp::get_items ltm data-group]"
+        }
+    }
+    choice perClientWLnxdomain default "No Whitelist" display "large" {
+        "No Whitelist" => "no_whitelist",
+        "Whitelist with Logging" => "whitelist_log",
+        "Whitelist" => "whitelist"
+    }
+    optional ( perClientWLnxdomain != "no_whitelist" ) {
+        choice perClientWLnxdomainDataGroup display "xxlarge" default "/#create_new#" tcl {
+            package require iapp 1.1.0
+            return "Create new Data-Group\t/#create_new#\n[iapp::get_items ltm data-group]"
+        }
+    }
+    choice perClientWLlongResp default "No Whitelist" display "large" {
+        "No Whitelist" => "no_whitelist",
+        "Whitelist with Logging" => "whitelist_log",
+        "Whitelist" => "whitelist"
+    }
+    optional ( perClientWLlongResp != "no_whitelist" ) {
+        choice perClientWLlongRespDataGroup display "xxlarge" default "/#create_new#" tcl {
+            package require iapp 1.1.0
+            return "Create new Data-Group\t/#create_new#\n[iapp::get_items ltm data-group]"
+        }
+    }
+}
+section dnsReqEnforce {
+    string globalConnLim default "110000" required validator "NonNegativeNumber" display "large"
+    message prereqs_1 "The following limits are per filtering/sampling time configured above"
+    string perClientLim default "200" required validator "NonNegativeNumber" display "small"
+    string maxReqLen default "80" required validator "NonNegativeNumber" display "small"
+    string longReqLim default "10" required validator "NonNegativeNumber" display "small"
+    string unusualReqLim default "20" required validator "NonNegativeNumber" display "small"
+    string maxResolvedLim default "100" required validator "NonNegativeNumber" display "small"
+}
+section dnsRespEnforce {
+    message prereqs_1 "The limits are per filtering/sampling time configured above"
+    string maxRespLen default "200" required validator "NonNegativeNumber" display "small"
+    string longRespLim default "20" required validator "NonNegativeNumber" display "small"
+    string nxdomRespLim default "20" required validator "NonNegativeNumber" display "small"
+}
+optional ( genSettings.enaReverseDnat == "Yes" ) {
+  section dnatSettings {
+    message prereqs_1 "Configure DNAT settings as per configuration on DNAT device"
+    string subscriberPool default "10.0.0.0/8" required validator "IpAddress" display "xlarge"
+    string natLow default "192.168.0.0" required validator "IpAddress" display "xlarge"
+    string natHigh default "192.168.127.255" required validator "IpAddress" display "xlarge"
+    string startPort default "1024" required validator "NonNegativeNumber" display "small"
+    choice blocksize default "64" display "large" tcl {
+    set bsize 2
+    while {$bsize < 64512} {
+      append results $bsize
+      append results "\n"
+      set bsize [expr { $bsize * 2 }]
+    }
+    return $results
+  }
+ }
+}
+section virtualServers {
+    optional ( genSettings.datagramLB == "Yes" ) {
+        message prereqs_1 "You choose to enable optimisation for UDP Virtual Servers, only UDP Virtual Servers with DatagramLB compatible configuration are shown."
+        multichoice vsNamesDGLB display "xlarge" tcl {
+            set tcp_vs ""
+            set udp_vs ""
+            foreach vs [tmsh::run_proc f5.app_utils:get_items /ltm virtual] {
+                set proto [tmsh::list /ltm virtual $vs ip-protocol]
+                if { [string match "*ip-protocol tcp*" $proto] } {
+                    append tcp_vs "$vs\n"
+                } elseif { [string match "*ip-protocol udp*" $proto] } {
+                    append udp_vs "$vs\n"
+                }
+            }
+            set udp_dglb_vs ""
+            set udp_dglb_profiles ""
+            foreach profile [tmsh::run_proc f5.app_utils:get_items /ltm profile udp] {
+                if { [string match "*datagram-load-balancing enabled*" [tmsh::list /ltm profile udp $profile datagram-load-balancing]] } {
+                    lappend udp_dglb_profiles [string trimleft $profile "/Common/"]
+                }
+            }
+            foreach vs $udp_vs {
+                foreach dglb_profile $udp_dglb_profiles {
+                    if { [string match "*${dglb_profile}*" [tmsh::list /ltm virtual $vs profiles]] } {
+                        append udp_dglb_vs "$vs\n"
+                    }
+                }
+            }
+            return "$tcp_vs$udp_dglb_vs"
+        }
+    }
+    optional ( genSettings.datagramLB == "No" ) {
+        multichoice vsNames display "xlarge" tcl { tmsh::run_proc f5.app_utils:get_items /ltm virtual }
+    }
+}
+text
+{
+    intro "F5 DNS Tunnel Mitigation Configuration template"
+    intro.hello "Introduction"
+    intro.templateInfo "About this Template"
+    intro.prereqs_1 "Prerequisites (Virtual Servers)"
+    intro.prereqs_2 "(About iRule)"
+    intro.prereqs_3 "(Profiles)"
+    intro.prereqs_4 "(SysLogPool)"
+    intro.prereqs_5 "(SP-Dag)"
+    intro.prereqs_6 "(Reverse PBA-NAT)"
+    genSettings "Global Settings"
+    genSettings.enableDropping "Enable/Disable Request dropping for blacklisted clients:"
+    genSettings.filterTime "Configure the filtering/sampling time(in milliseconds):"
+    genSettings.penaltyTime "Configure the blacklisting/penalty period(in seconds):"
+    genSettings.enaReverseDnat "Enable/Disable reverse PBA-NAT translation for logging client IP:"
+    genSettings.datagramLB "Optimise UDP virtual servers that have LoadBalancing Pool and DatagramLB Configured (uses DNS_REQUEST):"
+    genSettings.blackListTime "Interval(seconds) for Stats on number of Blacklisted Subscribers per TMM(0 to disable):"
+    genSettings.loggingConf "Configure Logging:"
+    WL "Whitelisting Configuration"
+    WL.prereqs_1 "Note::"
+    WL.globWhitelist "Global Whitelist:"
+    WL.globWhitelistDataGroup "Global Whitelist Data-Group:"
+    WL.perClientWLconLimit "Per Client Connection Limit Whitelist:"
+    WL.perClientWLlongQ "Per Client Long Query Limit Whitelist:"
+    WL.perClientWLunusualQ "Per Client Unusual Query Limit Whitelist:"
+    WL.perClientWLnxdomain "Per Client NXDOMAIN Response Limit Whitelist:"
+    WL.perClientWLresolLimit "Per Client Resolution Limit Whitelist:"
+    WL.perClientWLlongResp "Per Client Long Response Limit Whitelist:"
+    WL.perClientWLconLimitDataGroup "Per Client Connection Limit Data-Group:"
+    WL.perClientWLlongQDataGroup "Per Client Long Query Limit Data-Group:"
+    WL.perClientWLunusualQDataGroup "Per Client Unusual Query Limit Data-Group:"
+    WL.perClientWLnxdomainDataGroup "Per Client NXDOMAIN Response Limit Data-Group:"
+    WL.perClientWLresolLimitDataGroup "Per Client Resolution Limit Data-Group:"
+    WL.perClientWLlongRespDataGroup "Per Client Long Response Limit Data-Group:"
+    dnsReqEnforce "DNS Request Enforcement Settings"
+    dnsReqEnforce.globalConnLim "Configure global connection rate limit(cps) for the Virtual Server(pre-cache)"
+    dnsReqEnforce.prereqs_1 "Note::"
+    dnsReqEnforce.perClientLim "Configure TCP Connections(pre-cache) Per Client Limit:"
+    dnsReqEnforce.maxReqLen "Configure Maximum allowed Query Length(in bytes):"
+    dnsReqEnforce.longReqLim "Configure Longer Queries per Client Limit:"
+    dnsReqEnforce.unusualReqLim "Configure Unusual Queries per Client Limit:"
+    dnsReqEnforce.maxResolvedLim "Configure Resolutions per Client Limit:"
+    dnsRespEnforce "DNS Response Enforcement Settings"
+    dnsRespEnforce.prereqs_1 "Note::"
+    dnsRespEnforce.maxRespLen "Configure Maximum allowed Response Length(in bytes):"
+    dnsRespEnforce.longRespLim "Configure Longer Responses per Client Limit:"
+    dnsRespEnforce.nxdomRespLim "Configure NXDOMAIN and SERVFAIL responses per Client Limit:"
+    dnatSettings "DNAT Configuration Settings"
+    dnatSettings.prereqs_1 "Note::"
+    dnatSettings.subscriberPool "Configure Pre-NAT subscriber pool(IPSubnet/Netmask):"
+    dnatSettings.natLow "Configure First Usable Address of DNAT Pool:"
+    dnatSettings.natHigh "Configure Last Usable Address of DNAT Pool:"
+    dnatSettings.startPort "Configure First Usable Port for DNAT(default:1024):"
+    dnatSettings.blocksize "Configure DNAT Port Block Size:"
+    virtualServers "Virtual Server Selection"
+    virtualServers.prereqs_1 "Note::"
+    virtualServers.vsNames "Select the Virtual Servers to apply DNS Tunnel Mitigation rule:"
+    virtualServers.vsNamesDGLB "Select the Virtual Servers to apply DNS Tunnel Mitigation rule:"
+}
+            }
+            role-acl none
+            run-as none
+        }
+    }
+    description none
+    ignore-verification false
+    requires-bigip-version-max none
+    requires-bigip-version-min none
+    requires-modules none
+    signing-key none
+    tmpl-checksum none
+    tmpl-signature none
+}

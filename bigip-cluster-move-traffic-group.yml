@@ -1,0 +1,19 @@
+--- 
+
+- hosts: "{{ master }}"
+  gather_facts: false
+  max_fail_percentage: 0
+  environment:
+      F5_USER: "xxx"
+      F5_PASSWORD: "xxx1"
+      F5_VALIDATE_CERTS: "false"
+      F5_SERVER_PORT: 443
+  tasks:
+    - name: "Move traffic-group-{{ tgid }} to BIG-IP {{ newbigip }}"
+      bigip_command:
+        server: "{{ master }}"
+        commands:
+          - run sys failover standby traffic-group traffic-group-{{ tgid }} device {{ newbigip }}
+      delegate_to: localhost
+
+

@@ -1,0 +1,19 @@
+---
+- hosts: bigip-cluster
+  gather_facts: false
+  max_fail_percentage: 0
+  environment:
+      F5_USER: "xxx"
+      F5_PASSWORD: "xxx"
+      F5_VALIDATE_CERTS: "false"
+      F5_SERVER_PORT: 443
+  tasks:
+
+# This cannot be run with bigip_command because we run out of tokens
+
+    - name: "Distribute traffic groups"
+      shell: |
+        tmsh run sys failover standby traffic-group traffic-group-{{item.key}} device {{ bigip_fqdn[item.value] }}
+      with_dict: "{{ tg_active }}"
+     
+

@@ -1,0 +1,9 @@
+---
+
+- name: "Add customer services with a config-sync"
+  include_role: 
+    name: sync-to-group
+  when: bigip[id] == master
+  tags:
+    - add
+

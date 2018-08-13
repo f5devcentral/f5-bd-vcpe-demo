@@ -1,0 +1,68 @@
+
+---
+
+## Undeploy section
+
+- name: "Start of role customer-service with tag Del"
+  delegate_to: localhost
+  debug:
+    msg: "Operating on customer {{ segment_id }}"
+  when: bigip[id] == master
+  tags:
+    - del
+
+- name: Undeploy the iApp customer-services-forwarding
+  delegate_to: localhost
+  bigip_iapp_service:
+    name: "customer-services-forwarding-{{ segment_id }}"
+    template: customer-services-forwarding
+    traffic_group: "none"
+    #force: true
+    server: "{{ bigip[id] }}"
+    state: "absent"
+  when: (bigip_cluster_members_leaving is undefined) or (bigip_cluster_member[id] == False and bigip_cluster_members_leaving is defined)
+  tags:
+    - del
+
+- name: Delete from the BIG-IP library the iApp file customer-services-forwarding.tmpl
+  delegate_to: localhost
+  bigip_iapp_template:
+    content: "{{ lookup('template', 'customer-services-forwarding.tmpl') }}"
+#    force: false
+    server: "{{ bigip[id] }}"
+    state: "absent"
+  when: (bigip_cluster_members_leaving is undefined and bigip[id] == master) or (bigip_cluster_member[id] == False and bigip_cluster_members_leaving is defined)
+  register: result
+  failed_when:
+    - not result|success
+    - "'referenced by one or more applications' not in result.msg"
+  tags:
+    - del
+
+- name: Delete instantiate of anti DNS tunneling iApp
+  delegate_to: localhost
+  bigip_iapp_service:
+    name: "customer_services_antidnstunneling_{{ segment_id }}"
+    template: DNSTunnelMitigationV7
+    traffic_group: "none"
+#    force: true
+    server: "{{ bigip[id] }}"
+    state: "absent"
+  when: (bigip_cluster_members_leaving is undefined) or (bigip_cluster_member[id] == False and bigip_cluster_members_leaving is defined)
+  tags:
+    - del
+
+- name: "Delete from the BIG-IP library the iApp file DNSTunnelMitigationV7.tmpl"
+  bigip_command:
+      server: "{{ bigip[id] }}"
+      commands:
+      - delete sys application template DNSTunnelMitigationV7
+  delegate_to: localhost
+  when: (bigip_cluster_members_leaving is undefined and bigip[id] == master) or (bigip_cluster_member[id] == False and bigip_cluster_members_leaving is defined)
+  register: result
+  failed_when:
+    - not result|success
+    - "'referenced by one or more applications' not in result.msg"
+  tags:
+    - del
+

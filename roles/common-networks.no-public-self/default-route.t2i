@@ -1,0 +1,31 @@
+@label(__local__self_default_route__): IP address with prefix of the self interface connected to the default-route
+@label(__vlanid_default_route__): VLAN ID of the default-route network
+@label(__gw_default_route__): IP address of the gateway in the default-route network
+
+net vlan default-route {
+    interfaces {
+        1.2 {
+            tagged
+        }
+    }
+    tag __vlanid_default_route__
+}
+
+net self self-default-route {
+    address __local__self_default_route__
+    traffic-group /Common/traffic-group-local-only
+    vlan default-route
+}
+
+net route default {
+    gw __gw_default_route__
+    mtu 1450
+    network default
+}
+
+net route snat {
+    interface /Common/default-route
+    mtu 1450
+    network 10.104.2.0/24
+}
+

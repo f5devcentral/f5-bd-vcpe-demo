@@ -1,0 +1,18 @@
+- name: "Clean BIG-IP auth tokens" 
+  delegate_to: localhost
+  shell: |
+    bigip-delete-tokens {{ max_tokens }} {{bigip[id]}} {{ ansible_env.F5_USER }} {{ ansible_env.F5_PASSWORD }}
+#    curl -sk -w %{http_code} -o /dev/null https://{{bigip[id]}}/mgmt/shared/authz/tokens -u {{ ansible_env.F5_USER }}:{{ ansible_env.F5_PASSWORD }} -X DELETE
+  register: result
+#  failed_when:
+#    - "'200' not in result.stdout"
+  tags:
+    - always
+
+- name: "Output of BIG-IP auth tokens"
+  delegate_to: localhost
+  debug:
+    msg: "{{ result.stdout }}"
+  tags:
+    - always
+

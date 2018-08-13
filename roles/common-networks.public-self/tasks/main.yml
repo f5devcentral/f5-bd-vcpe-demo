@@ -1,0 +1,360 @@
+---
+
+### Deploy
+
+#- name: Create L2 for default-route
+#  delegate_to: localhost
+#  os_network:
+#    name: default-route
+#    state: present
+#  when: bigip_cluster_member[id] == True and bigip[id] == master
+#  tags:
+#    - add
+#
+#- name: Gather facts of created L2 for default-route
+#  delegate_to: localhost
+#  os_networks_facts:
+#    name: default-route
+#  register: default_route_network
+#  tags:
+#    - add
+#
+#- name: Create L3 for default route
+#  delegate_to: localhost
+#  os_subnet:
+#    state: present
+#    network_name: default-route 
+#    name: default-route
+#    ip_version: 4
+#    cidr: 192.168.0.1/24 
+#    gateway_ip: 192.168.0.1 
+#    enable_dhcp: no
+#  when: bigip_cluster_member[id] == True and bigip[id] == master
+#  tags:
+#    - add
+#
+#- name: Gather facts of created L3 for default-route
+#  delegate_to: localhost
+#  os_subnets_facts:
+#    name: default-route
+#  register: default_route_subnet
+#  tags:
+#    - add
+
+# Creating them in master is the only way to avoid having all BIG-IPs be enabled in the inventory
+- name: Create ports for BIG-IPs in network for default-route
+  delegate_to: localhost
+  os_port:
+    state: present
+    name: "{{bigip_fqdn[item]}}-default-route"
+    network: default-route
+    mac_address: "{{ bigip_provider[item] }}"
+    allowed_address_pairs:
+      - ip_address: 0.0.0.0/0
+        mac_address: "{{ bigip_provider[item] }}"
+    fixed_ips:
+      - ip_address: "{{ bigip_default_route[item] }}"
+  with_items: "{{ bigip_names }}"
+#  with_items: "{{ bigip_fqdn | dictsort | map(attribute='1') | list }}"
+  when: bigip_cluster_member[id] == True and bigip[id] == master
+  tags:
+    - add
+
+# There is no module currently https://github.com/ansible/ansible/issues/33905
+- name: Assign new port to trunk
+  delegate_to: localhost
+  shell: |
+    openstack network trunk set --subport port={{bigip_fqdn[item]}}-default-route,segmentation-type=vlan,segmentation-id=4094 {{bigip_fqdn[item]}}-provider-trunk
+  with_items: "{{ bigip_names }}"
+  when: bigip_cluster_member[id] == True and bigip[id] == master
+  register: result
+  failed_when:
+    - not result|success
+    - "'is in use by another trunk' not in result.stderr"
+  tags:
+    - add 
+
+- name: Gather facts of customer ports
+  delegate_to: localhost
+  os_port_facts:
+    port: "{{ item }}-default-route" 
+  with_items: "{{ bigip_fqdn | dictsort | map(attribute='1') | list }}"
+  register: default_ports
+  tags:
+    - add
+
+#- name: "Debug default_ports"
+#  debug:
+#    msg: "{{ default_ports }}"
+#  tags:
+#    - add
+
+# TODO: Is it possible to make this more quiet?
+
+- name: "Initialize self-IP address list for the default route"
+  set_fact:
+    self_default: ""
+  tags:
+    - add
+
+- name: "Setup self-IP address list for the default route"
+  set_fact:
+    self_default: "{{ self_default + item.ansible_facts.openstack_ports[0].fixed_ips[0].ip_address }}/24 "
+  with_items: "{{ default_ports.results }}"
+  tags:
+    - add
+
+#- name: "Debug default_route_port"
+#  debug:
+#    msg: "{{ default_route_port }}"
+#  tags:
+#    - add
+
+- name: "Deploy the iApp template default-route"
+  delegate_to: localhost
+  bigip_iapp_template:
+    content: "{{ lookup('template', 'default-route.tmpl') }}"
+    force: true 
+    server: "{{ bigip[id] }}"
+    state: "present"
+  when: bigip_cluster_member[id] == True
+  tags:
+    - add
+
+#
+- name: "Deploy in the BIG-IP the VLAN for default-route with default-route iApp template"
+  delegate_to: localhost
+  bigip_iapp_service:
+    name: default-route
+    template: default-route
+    traffic_group: traffic-group-local-only
+    force: true 
+    server: "{{ bigip[id] }}"
+    state: present
+    parameters:
+      variables:
+         - name: "local__bigip_names"
+           value: "{{ bigip_names | join(' ') }}"
+         - name: "local__self_default_route" 
+           value: "{{ self_default }}"
+         - name: "var__vlanid_default_route"
+           value: "4094"
+#           value: "{{ default_route_network.ansible_facts.openstack_networks[0]['provider:segmentation_id'] }}"
+         - name: "var__gw_default_route"
+           value: "{{ gw_default_route }}"
+  when: bigip_cluster_member[id] == True
+  tags:
+    - add
+
+#- name: "Deploy the iApp template default-route"
+#  delegate_to: localhost
+#  bigip_iapp_template:
+#    content: "{{ lookup('template', 'default-route.tmpl') }}"
+#    force: true
+#    server: "{{ bigip[id] }}"
+#    state: "present"
+#  when: bigip_cluster_member[id] == True and bigip[id] == master
+#  tags:
+#    - add
+#
+#- name: "Deploy in the BIG-IP the default route with default-route iApp template"
+#  delegate_to: localhost
+#  bigip_iapp_service:
+#    name: default-route
+#    template: default-route
+#    traffic_group: traffic-group-local-only
+#    force: true
+#    server: "{{ bigip[id] }}"
+#    state: present
+#    parameters:
+#      variables:
+#         - name: "var__gw_default_route"
+#           value: "{{ gw_default_route }}"
+#  when: bigip_cluster_member[id] == True and bigip[id] == master
+#  tags:
+#    - add
+
+#- name: "Deploy the iApp template wildcard-virtual-address"
+#  delegate_to: localhost
+#  bigip_iapp_template:
+#    content: "{{ lookup('template', 'wildcard-virtual-address.tmpl') }}"
+#    force: true 
+#    server: "{{ bigip[id] }}"
+#    state: "present"
+#  when: bigip_cluster_member[id] == True and bigip[id] == master
+#  tags:
+#    - add
+
+#- name: "Deploy in the BIG-IP the service wildcard-virtual-adress from the iApp template of the same name"
+#  delegate_to: localhost
+#  bigip_iapp_service:
+#    name: "wildcard-virtual-address"
+#    template: wildcard-virtual-address 
+#    traffic_group: "none"
+#    force: true 
+#    server: "{{ bigip[id] }}"
+#    state: present
+#  when: bigip_cluster_member[id] == True and bigip[id] == master
+#  tags:
+#    - add
+
+
+- name: "Deploy the iApp template hsl_pool"
+  delegate_to: localhost
+  bigip_iapp_template:
+    content: "{{ lookup('template', 'hsl_pool.tmpl') }}"
+    force: true
+    server: "{{ bigip[id] }}"
+    state: "present"
+  when: bigip_cluster_member[id] == True and bigip[id] == master
+  tags:
+    - add
+
+- name: "Deploy in the BIG-IP the service hsl_pool from the iApp template of the same name"
+  delegate_to: localhost
+  bigip_iapp_service:
+    name: "hsl_pool"
+    template: hsl_pool
+    traffic_group: "none"
+    force: true
+    server: "{{ bigip[id] }}"
+    state: present
+    parameters:
+      variables:
+         - name: "pm__syslog_server_pool"
+           value: "{{ pm__syslog_server_pool }}"
+         - name: "pm__syslog_server_pool_properties"
+           value: ""
+  when: bigip_cluster_member[id] == True and bigip[id] == master
+  tags:
+    - add
+
+### Undeploy
+
+#- name: "Undeploy in the BIG-IP the service wildcard-virtual-adress from the iApp template of the same name"
+#  delegate_to: localhost
+#  bigip_iapp_service:
+#    name: "wildcard-virtual-address"
+#    template: wildcard-virtual-address
+#    force: true
+#    server: "{{ bigip[id] }}"
+#    state: absent
+#  when: bigip_cluster_member[id] == False
+#  tags:
+#    - del
+#
+#- name: "Undeploy the iApp template wildcard-virtual-address"
+#  delegate_to: localhost
+#  bigip_iapp_template:
+#    content: "{{ lookup('template', 'wildcard-virtual-address.tmpl') }}"
+#    force: true
+#    server: "{{ bigip[id] }}"
+#    state: absent 
+#  when: bigip_cluster_member[id] == False
+#  tags:
+#    - del
+
+
+- name: "Undeploy in the BIG-IP hsl_pool service"
+  delegate_to: localhost 
+  bigip_iapp_service:
+    name: hsl_pool
+    template: hsl_pool
+    force: true
+    server: "{{ bigip[id] }}"
+    state: absent
+  when: bigip_cluster_member[id] == False
+  tags:
+    - del
+
+- name: "Undeploy in the BIG-IP the hsl_pool iApp template"
+  delegate_to: localhost
+  bigip_iapp_template:
+    content: "{{ lookup('template', 'hsl_pool.tmpl') }}"
+    force: true
+    server: "{{ bigip[id] }}"
+    state: absent
+  when: bigip_cluster_member[id] == False
+  tags:
+    - del
+
+- name: "Undeploy in the BIG-IP the default route service"
+  delegate_to: localhost
+  bigip_iapp_service:
+    name: default-route
+    template: default-route
+    force: true
+    server: "{{ bigip[id] }}"
+    state: absent
+  when: bigip_cluster_member[id] == False
+  tags:
+    - del
+
+- name: "Undeploy the iApp template default-route"
+  delegate_to: localhost
+  bigip_iapp_template:
+    content: "{{ lookup('template', 'default-route.tmpl') }}"
+    force: true
+    server: "{{ bigip[id] }}"
+    state: absent
+  when: bigip_cluster_member[id] == False and bigip[id] == master
+# Not checking deletion because there should be only
+  tags:
+    - del
+
+- name: Remove port from trunk
+  delegate_to: localhost
+  shell: |
+    openstack network trunk unset --subport {{bigip_fqdn[item]}}-default-route {{bigip_fqdn[item]}}-provider-trunk
+  with_items: "{{ bigip_names }}"
+  when: bigip_cluster_member[id] == False and bigip[id] == master
+  tags:
+    - del
+
+# We don't delete the ports until the last element of the cluster is deleted (mater) because if the BIG-IPs are re-created we want to keep stable IPs
+- name: Delete all ports for BIG-IP in default-route's network
+  delegate_to: localhost
+  os_port:
+    state: absent
+    name: "{{ item }}-default-route"
+    network: "default-route"
+  with_items: "{{ bigip_fqdn | dictsort | map(attribute='1') | list }}"
+  when: bigip_cluster_member[id] == False and bigip[id] == master
+  tags:
+    - del
+
+#- name: Delete L3 for default route
+#  delegate_to: localhost
+#  os_subnet:
+#    state: absent
+#    name: default-route
+#  when: bigip_cluster_member[id] == False and bigip[id] == master
+#  register: delete_l3_default_route
+#  ignore_errors: True
+#  tags:
+#    - del
+#
+#- name: "Check if L3 was not deleted unexpectedly"
+#  fail: msg="Unexpectedly not deleted the L3 network for the default route"
+#  when: bigip_cluster_member[id] == False and bigip[id] == master and not "'One or more ports have an IP allocation from this subnet' in delete_l3_default_route.msg"
+#  tags:
+#    - del
+#
+#- name: Delete L2 for default-route
+#  connection: local
+#  os_network:
+#    name: default-route
+#    state: absent
+#  when: bigip_cluster_member[id] == False and bigip[id] == master
+#  register: delete_l2_default_route
+#  ignore_errors: True
+#  tags:
+#    - del
+#
+#- name: "Check if L2 was not deleted unexpectedly"
+#  fail: msg="Unexpectedly not deleted the L2 network for the default route"
+#  when: bigip_cluster_member[id] == False and bigip[id] == master and not "'There are one or more ports still in use on the network' in delete_l2_default_route.msg"
+#  tags:
+#    - del
+
+

@@ -1,0 +1,132 @@
+cli admin-partitions {
+    update-partition Common
+}
+
+sys application template base-network-config {
+
+    actions {
+        definition {
+
+            implementation {
+
+		puts "Starting iApp $tmsh::app_name.app generated with tmsh2iapp version 20171127.2"
+
+                set partition "/[lindex [split [tmsh::pwd] /] 1]"
+
+                puts "The iApp is being instantiated in @partition $partition"
+                if { $partition == "/" } { puts "Warning: unexpected behaviour when @partition variable is to \"/\"" }
+
+
+puts "Dumping values passed to iApp variables"
+puts ">>> regular variables"
+puts "__ha_interface__ >${::var__ha_interface}<"
+puts ">>> pool member variables"
+puts ">>> data record variables"
+puts ">>> firewall address list variables"
+puts ">>> firewall port list variables"
+puts ">>> url match category list variables"
+puts ">>> url nomatch category list variables"
+puts ">>> iworkflow variables"
+puts "End of dumping values passed to iApp variables"
+
+                set cfg { 
+net vlan ha {
+    mtu 1450
+    interfaces {
+        __ha_interface__ { }
+    }
+    tag 4093
+}
+
+net self ha {
+    address __local__ha_prefix__ 
+    allow-service all
+    vlan ha
+} }
+
+
+                set cfg [string map "@service_folder $tmsh::app_name.app @partition $partition __ha_interface__ {${::var__ha_interface}} __app_service__ $tmsh::app_name.app/$tmsh::app_name " $cfg]
+
+
+                set this_bigip [ tmsh::list sys global-settings hostname ]
+                regexp -line "hostname (.*)" $this_bigip x this_bigip
+                puts "Found this BIG-IP is $this_bigip"
+                set index_bigip -1
+                set list_bigips [split [regexp -all -inline {\S+} $local__bigip_names]]
+                set i 0
+
+                foreach bigip $list_bigips {
+                   if {[regexp -nocase ^$bigip $this_bigip]} {
+                      puts "Matched $bigip with $this_bigip using index $i"
+                      if {$index_bigip != -1} {
+                          set i_name [lindex $i $list_bigips]
+                          set index_name [lindex $index_bigip $list_bigips]
+                          error "Several matches found for $this_bigip with indexes $index_bigip ($index_name) and $i ($i_name)"
+                      }
+                      set index_bigip $i
+                   }
+                   incr i
+                }
+                if {$index_bigip == -1} {
+                   error "Could not find $this_bigip in list >$local__bigip_names<"
+                }
+
+                set n_bigips [llength $list_bigips]
+                set ll [llength ${::local__ha_prefix}]
+                if {$ll != $n_bigips} {
+                   error "The number of values in the variable local__ha_prefix ($ll) is different than the number of BIG-IPs ($n_bigips), variable value is >${::local__ha_prefix}<"
+                }
+
+                set value [lindex ${::local__ha_prefix} $index_bigip]
+                puts "Applying local value >$value< for __local__ha_prefix__"
+                set cfg [string map "__local__ha_prefix__ {$value}" $cfg]
+
+                set fileId [open /var/tmp/base-network-config.cfg "w"]
+                puts -nonewline $fileId $cfg
+                close $fileId
+
+                tmsh::cd "/Common"
+                tmsh::load sys config merge file /var/tmp/base-network-config.cfg
+
+
+
+
+
+
+
+
+
+
+
+
+    
+                puts "Finished iApp $tmsh::app_name.app generated with tmsh2iapp version 20171127.2"
+            }
+    
+            presentation {
+
+                include "/Common/f5.apl_common"
+                section var {
+                        string ha_interface display "xxlarge"
+                }
+
+                section local {
+                        string bigip_names display "xxlarge"
+                        string ha_prefix display "xxlarge"
+                }
+
+                text {
+
+                        var "General variables"
+                        var.ha_interface "Physical interface used for HA configuration"
+
+                        local "Per BIG-IP local variables"
+                        local.bigip_names "List of all the BIG-IP names in the cluster"
+                        local.ha_prefix "IP addresses used for HA configuration"
+                }
+            } 
+            role-acl { admin manager resource-admin }
+        }
+    }
+
+}

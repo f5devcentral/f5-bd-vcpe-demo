@@ -1,0 +1,28 @@
+---
+- hosts: bigip-cluster
+  gather_facts: false
+  max_fail_percentage: 0
+  environment:
+  environment:
+      F5_USER: "admin"
+      F5_PASSWORD: "xxx"
+      F5_VALIDATE_CERTS: "false"
+      F5_SERVER_PORT: 443
+      OS_TENANT_NAME: "service"
+      OS_USERNAME: "xxx"
+      OS_PASSWORD: "xxx"
+      OS_AUTH_URL: "http://10.105.211.69:5000/v2.0"
+  roles:
+    - setfacts
+    - clean-bigip-auth-tokens
+    - ha-config
+    - del-all-customers-services
+    - del-all-customers-networks
+    - clean-bigip-auth-tokens
+    - traffic-groups
+    - common-networks
+    - base-network-config
+    - save-config-standalone-unit
+    - sync-to-group
+
+

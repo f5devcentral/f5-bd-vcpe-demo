@@ -1,0 +1,19 @@
+---
+
+- name: "Add all customer networks"
+  with_dict: "{{ ansible_local.customers.ids }}"
+  loop_control:
+    loop_var: outer_item
+  include_role: 
+    name: add-customer-networks
+#  include_role:
+#    name: clean-bigip-auth-tokens
+  vars:
+# TODO: this segment_id variable should probably be renamed customer_id
+    segment_id: "{{ outer_item.key }}"
+    traffic_group: "{{ outer_item.value }}"
+# We run the role for all nodes in the inventory. The ports are created regardless the BIG-IP is added to the cluster or not
+#  when: bigip_cluster_member[id] == True and bigip[id] != master
+  tags:
+    - add
+

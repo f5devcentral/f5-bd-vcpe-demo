@@ -1,0 +1,27 @@
+---
+- hosts: localhost
+  gather_facts: false
+  max_fail_percentage: 0
+  environment:
+      OS_TENANT_NAME: "service"
+      OS_USERNAME: "ulises"
+      OS_PASSWORD: "xxxxx"
+      OS_AUTH_URL: "http://10.105.211.69:5000/v2.0"
+
+  tasks:
+
+  - name: "Create testpoint access port for customer {{ customer_id }}"
+    os_port:
+      state: present
+      name: "testpoint-customer-{{ customer_id }}"
+      network: "customer-access-{{ customer_id }}"
+#      fixed_ips: 
+#        - ip_address: "192.168.{{ customer_id }}.254"
+#    run_once: true
+    register: port
+
+  - name: "Attach testpoint to customer access network"
+    shell: |
+      nova interface-attach --port-id {{ port.id }} "Customer Test Point"
+#    run_once: true
+

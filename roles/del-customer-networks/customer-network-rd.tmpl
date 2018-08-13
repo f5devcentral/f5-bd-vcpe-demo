@@ -1,0 +1,145 @@
+cli admin-partitions {
+    update-partition Common
+}
+
+sys application template customer-network-rd {
+
+    actions {
+        definition {
+
+            implementation {
+
+		puts "Starting iApp $tmsh::app_name.app generated with tmsh2iapp version 20171127.2"
+
+                set partition "/[lindex [split [tmsh::pwd] /] 1]"
+
+                puts "The iApp is being instantiated in @partition $partition"
+                if { $partition == "/" } { puts "Warning: unexpected behaviour when @partition variable is to \"/\"" }
+
+
+puts "Dumping values passed to iApp variables"
+puts ">>> regular variables"
+puts "__provider_interface__ >${::var__provider_interface}<"
+puts "__segment_id__ >${::var__segment_id}<"
+puts ">>> pool member variables"
+puts ">>> data record variables"
+puts ">>> firewall address list variables"
+puts ">>> firewall port list variables"
+puts ">>> url match category list variables"
+puts ">>> url nomatch category list variables"
+puts ">>> iworkflow variables"
+puts "End of dumping values passed to iApp variables"
+
+                set cfg { 
+net vlan customer-__segment_id__ {
+    interfaces {
+        __provider_interface__ {
+            tagged
+        }
+    }
+    tag __segment_id__
+}
+
+net route-domain customer-__segment_id__ {
+    id __segment_id__
+    parent /Common/0
+    strict disabled
+    vlans {
+        customer-__segment_id__
+    }
+}
+
+net self self-customer-__segment_id__ {
+    address __local__self_customer__
+    traffic-group /Common/traffic-group-local-only
+    vlan customer-__segment_id__
+} }
+
+
+                set cfg [string map "@service_folder $tmsh::app_name.app @partition $partition __provider_interface__ {${::var__provider_interface}} __segment_id__ {${::var__segment_id}} __app_service__ $tmsh::app_name.app/$tmsh::app_name " $cfg]
+
+
+                set this_bigip [ tmsh::list sys global-settings hostname ]
+                regexp -line "hostname (.*)" $this_bigip x this_bigip
+                puts "Found this BIG-IP is $this_bigip"
+                set index_bigip -1
+                set list_bigips [split [regexp -all -inline {\S+} $local__bigip_names]]
+                set i 0
+
+                foreach bigip $list_bigips {
+                   if {[regexp -nocase ^$bigip $this_bigip]} {
+                      puts "Matched $bigip with $this_bigip using index $i"
+                      if {$index_bigip != -1} {
+                          set i_name [lindex $i $list_bigips]
+                          set index_name [lindex $index_bigip $list_bigips]
+                          error "Several matches found for $this_bigip with indexes $index_bigip ($index_name) and $i ($i_name)"
+                      }
+                      set index_bigip $i
+                   }
+                   incr i
+                }
+                if {$index_bigip == -1} {
+                   error "Could not find $this_bigip in list >$local__bigip_names<"
+                }
+
+                set n_bigips [llength $list_bigips]
+                set ll [llength ${::local__self_customer}]
+                if {$ll != $n_bigips} {
+                   error "The number of values in the variable local__self_customer ($ll) is different than the number of BIG-IPs ($n_bigips), variable value is >${::local__self_customer}<"
+                }
+
+                set value [lindex ${::local__self_customer} $index_bigip]
+                puts "Applying local value >$value< for __local__self_customer__"
+                set cfg [string map "__local__self_customer__ {$value}" $cfg]
+
+                set fileId [open /var/tmp/customer-network-rd.cfg "w"]
+                puts -nonewline $fileId $cfg
+                close $fileId
+
+                tmsh::cd "/Common"
+                tmsh::load sys config merge file /var/tmp/customer-network-rd.cfg
+
+
+
+
+
+
+
+
+
+
+
+
+    
+                puts "Finished iApp $tmsh::app_name.app generated with tmsh2iapp version 20171127.2"
+            }
+    
+            presentation {
+
+                include "/Common/f5.apl_common"
+                section var {
+                        string provider_interface display "xxlarge"
+                        string segment_id display "xxlarge"
+                }
+
+                section local {
+                        string bigip_names display "xxlarge"
+                        string self_customer display "xxlarge"
+                }
+
+                text {
+
+                        var "General variables"
+                        var.provider_interface "Physical interface used as provider network"
+                        var.segment_id "Segment ID of the customer L2"
+
+                        local "Per BIG-IP local variables"
+                        local.bigip_names "List of all the BIG-IP names in the cluster"
+                        local.self_customer "IP address with prefix of the self interface of the customer"
+                }
+            } 
+            role-acl { admin manager resource-admin }
+        }
+    }
+
+}

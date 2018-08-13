@@ -1,0 +1,92 @@
+cli admin-partitions {
+    update-partition Common
+}
+
+sys application template hsl_pool {
+
+    actions {
+        definition {
+
+            implementation {
+
+		puts "Starting iApp $tmsh::app_name.app generated with tmsh2iapp version 20171127.2"
+
+                set partition "/[lindex [split [tmsh::pwd] /] 1]"
+
+                puts "The iApp is being instantiated in @partition $partition"
+                if { $partition == "/" } { puts "Warning: unexpected behaviour when @partition variable is to \"/\"" }
+
+
+puts "Dumping values passed to iApp variables"
+puts ">>> regular variables"
+puts ">>> pool member variables"
+puts "> __pm__syslog_server_pool__ >${::pm__syslog_server_pool}<"
+puts "> __pm__syslog_server_pool__ properties >${::pm__syslog_server_pool_properties}<"
+puts ">>> data record variables"
+puts ">>> firewall address list variables"
+puts ">>> firewall port list variables"
+puts ">>> url match category list variables"
+puts ">>> url nomatch category list variables"
+puts ">>> iworkflow variables"
+puts "End of dumping values passed to iApp variables"
+
+                set cfg { 
+ltm pool syslog_server_pool {
+    __pm__syslog_server_pool__
+} }
+
+
+                set cfg [string map "@service_folder $tmsh::app_name.app @partition $partition __pm__syslog_server_pool__ {} __app_service__ $tmsh::app_name.app/$tmsh::app_name " $cfg]
+
+                set fileId [open /var/tmp/hsl_pool.cfg "w"]
+                puts -nonewline $fileId $cfg
+                close $fileId
+
+                tmsh::cd "/Common"
+                tmsh::load sys config merge file /var/tmp/hsl_pool.cfg
+
+
+                if {([info exists {::pm__syslog_server_pool}]) && ([string length ${::pm__syslog_server_pool}] > 0)} {
+                   set cmd "tmsh::modify ltm pool syslog_server_pool { members replace-all-with { ${::pm__syslog_server_pool} } }"
+                   puts "$cmd"
+                   eval $cmd
+                   if {([info exists {::pm__syslog_server_pool_properties}]) && ([string length ${::pm__syslog_server_pool_properties}] > 0)} {
+                      set cmd "tmsh::modify ltm pool syslog_server_pool { members modify { all { ${::pm__syslog_server_pool_properties} } } }"
+                      puts "$cmd"
+                      eval $cmd
+                   }
+                }
+
+
+
+
+
+
+
+
+
+
+    
+                puts "Finished iApp $tmsh::app_name.app generated with tmsh2iapp version 20171127.2"
+            }
+    
+            presentation {
+
+                include "/Common/f5.apl_common"
+                section pm {
+                        string syslog_server_pool display "xxlarge"
+                        string syslog_server_pool_properties display "xxlarge"
+                }
+
+                text {
+
+                        pm "Pool members"
+                        pm.syslog_server_pool "SYSLOG High Speed Logging pool"
+                        pm.syslog_server_pool_properties "Properties for SYSLOG High Speed Logging pool"
+                }
+            } 
+            role-acl { admin manager resource-admin }
+        }
+    }
+
+}

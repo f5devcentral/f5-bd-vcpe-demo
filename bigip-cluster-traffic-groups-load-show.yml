@@ -1,0 +1,20 @@
+---
+- hosts: bigip-cluster
+  gather_facts: false
+  max_fail_percentage: 0
+  vars:
+      F5_USER: "xxx"
+      F5_PASSWORD: "xxx"
+  tasks:
+    - name: "Retrieve traffic-groups information from BIG-IP {{master}}"
+      delegate_to: localhost
+      shell: |
+        bigip-traffic-groups-load-show {{ F5_USER }}:{{ F5_PASSWORD }}@{{master}}
+      register: result
+      when: bigip[id] == master
+
+    - name: "Show traffic-groups information"
+      delegate_to: localhost
+      debug: var=result.stdout_lines
+      when: bigip[id] == master
+

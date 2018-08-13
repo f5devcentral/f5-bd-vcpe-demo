@@ -1,0 +1,25 @@
+---
+- hosts: bigip-cluster
+  gather_facts: false
+  max_fail_percentage: 0
+  environment:
+      F5_USER: "admin"
+      F5_PASSWORD: "xxx"
+      F5_VALIDATE_CERTS: "false"
+      F5_SERVER_PORT: 443
+      OS_TENANT_NAME: "service"
+      OS_USERNAME: "xxx"
+      OS_PASSWORD: "xxx"
+      OS_AUTH_URL: "http://10.105.211.69:5000/v2.0"
+  vars:
+     segment_id: "{{ customer_id }}"
+     traffic_group: "{{ (((segment_id|int) % 56 )+1)|int }}"
+  roles:
+    - setfacts
+    - { role: del-customer-services, customer_prefix: "192.168.{{ segment_id }}.0/24", snat_addresses: "10.104.2.{{ segment_id }}" }
+    # We need to sync otherwise customer-networks will fail
+    # running this playbook when a bigip is being removed from the cluster then sync should not be performed
+    - sync-to-group
+    - del-customer-networks
+    - sync-to-group
+

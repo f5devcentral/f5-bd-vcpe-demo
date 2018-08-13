@@ -1,0 +1,172 @@
+---
+
+- name: Undeploy customer networks
+  debug:
+    msg: "Using Segment ID {{ segment_id }}"
+  tags:
+    - del
+
+- name: "Clean BIG-IP auth tokens" 
+  delegate_to: localhost
+  shell: |
+    bigip-delete-tokens {{ max_tokens }} {{bigip[id]}} {{ ansible_env.F5_USER }} {{ ansible_env.F5_PASSWORD }}
+  tags:
+    - always
+
+# Conditions for deletion used in this role
+
+# - Condition #1
+#
+# (bigip_cluster_members_leaving is undefined) or (bigip_cluster_member[id] == False and bigip_cluster_members_leaving is defined)
+#
+# True when the service is being deleted in the cluster
+#
+# - Condition #2
+#
+# (bigip_cluster_members_leaving is undefined and bigip[id] == master)
+#
+# True when the service is being deleted in the cluster, run only once, in the master node
+#
+# - Condition #3
+#
+# (bigip_cluster_member[id] == False and bigip_cluster_members_leaving is defined)
+#
+# True when this BIG-IP is being removed from the cluster, not the service. 
+#
+
+- name: "Undeploy in the BIG-IP the VLAN for the customer with customer-network-rd iApp template"
+  delegate_to: localhost
+  bigip_iapp_service:
+    name: "customer-network-{{ segment_id }}"
+    template: customer-network-rd
+    force: true
+    server: "{{ bigip[id] }}"
+    state: absent
+  when: (bigip_cluster_members_leaving is undefined) or (bigip_cluster_member[id] == False and bigip_cluster_members_leaving is defined)
+  tags:
+    - del
+
+- name: "Undeploy the iApp template customer-network-rd"
+  delegate_to: localhost
+  bigip_iapp_template:
+    content: "{{ lookup('template', 'customer-network-rd.tmpl') }}"
+    force: true
+    server: "{{ bigip[id] }}"
+    state: "absent"
+  when: (bigip_cluster_members_leaving is undefined and bigip[id] == master) or (bigip_cluster_member[id] == False and bigip_cluster_members_leaving is defined)
+  register: result
+  failed_when:
+    - not result|success
+    - "'referenced by one or more applications' not in result.msg"
+  tags:
+    - del
+
+- name: Remove default route through the BIG-IP in customer's vBNG
+  delegate_to: localhost
+  shell: |
+    openstack router unset --route destination=0.0.0.0/0,gateway=192.168.{{ segment_id }}.3 bng-customer-{{ segment_id }}
+  register: result
+  failed_when:
+    - not result|success
+    - "'No Router found' not in result.stderr"
+  when: (bigip_cluster_members_leaving is undefined and bigip[id] == master)
+  tags:
+    - del
+
+# We don't delete external resources until the service is completly deleted
+
+- name: "Delete customer's vBNG"
+  delegate_to: localhost
+  os_router:
+    state: absent
+    name: "bng-customer-{{ segment_id}}"
+  failed_when:
+    - not result|success
+    - "'could not be found' not in result.stderr"
+  when: (bigip_cluster_members_leaving is undefined and bigip[id] == master)
+  tags:
+    - del
+
+- name: Delete port for default gateway in customer's vBNG network
+  delegate_to: localhost
+  os_port:
+    state: absent
+    name: "floating-customer-{{ segment_id }}"
+    network: "customer-{{ segment_id }}"
+  when: (bigip_cluster_members_leaving is undefined and bigip[id] == master)
+  tags:
+    - del
+
+- name: Remove port towards vBNG from trunk
+  delegate_to: localhost
+  shell: |
+    openstack network trunk unset --subport {{bigip_fqdn[item]}}-customer-{{segment_id}} {{bigip_fqdn[item]}}-provider-trunk
+  with_items: "{{ bigip_names }}"
+  when: (bigip_cluster_members_leaving is undefined and bigip[id] == master)
+  register: result
+# This typically happens when re-running the delete template it didn't finish the first time
+  failed_when:
+    - not result|success
+    - "'Unable to find port with name' not in result.stderr"
+  tags:
+    - del
+
+- name: Delete all ports for BIG-IP in customer's vBNG network
+  delegate_to: localhost
+  os_port:
+    state: absent
+    name: "{{bigip_fqdn[item]}}-customer-{{ segment_id }}"
+    network: "customer-{{ segment_id }}"
+  with_items: "{{ bigip_names }}"
+  when: (bigip_cluster_members_leaving is undefined and bigip[id] == master)
+  tags:
+    - del
+
+- name: Delete L3 for customer's vBNG
+  delegate_to: localhost
+  os_subnet:
+    state: absent
+    network_name: "customer-{{ segment_id }}"
+    name: "customer-{{ segment_id }}"
+    cidr: "192.168.{{ segment_id }}.0/24"
+  when: (bigip_cluster_members_leaving is undefined and bigip[id] == master)
+  tags:
+    - del
+
+- name: Delete L2 for customer's vBNG
+  delegate_to: localhost
+  os_network:
+    name: "customer-{{ segment_id }}"
+    state: absent
+    provider_segmentation_id: "{{ segment_id }}"
+    provider_network_type: "vlan"
+  when: (bigip_cluster_members_leaving is undefined and bigip[id] == master)
+  tags:
+    - del
+
+- name: Delete L3 for customer's access
+  delegate_to: localhost
+  os_subnet:
+    state: absent
+    network_name: "customer-access-{{ segment_id }}"
+    name: "customer-access-{{ segment_id }}"
+  when: (bigip_cluster_members_leaving is undefined and bigip[id] == master)
+  tags:
+    - del
+
+- name: Delete L2 for customer's access
+  delegate_to: localhost
+  os_network:
+    name: "customer-access-{{ segment_id }}"
+    state: absent
+  when: (bigip_cluster_members_leaving is undefined and bigip[id] == master)
+  tags:
+    - del
+
+- name: "Unset this customer network as a local fact stored in BIG-IPs"
+  shell: |
+    ( [ -r /config/facts.d/customers.fact ] && grep -v '{{ segment_id }}: {{ traffic_group }}' /config/facts.d/customers.fact > /var/tmp/customers.fact && mv /var/tmp/customers.fact /config/facts.d/customers.fact ) || true
+  when: (bigip_cluster_members_leaving is undefined) or (bigip_cluster_member[id] == False and bigip_cluster_members_leaving is defined)
+  tags:
+    - del
+

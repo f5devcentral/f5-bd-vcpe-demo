@@ -1,0 +1,223 @@
+@label(__tg_load1__): traffic-group 1 load relative to other traffic-groups.
+@label(__tg_load2__): traffic-group 2 load relative to other traffic-groups.
+@label(__tg_load3__): traffic-group 3 load relative to other traffic-groups.
+@label(__tg_load4__): traffic-group 4 load relative to other traffic-groups.
+@label(__tg_load5__): traffic-group 5 load relative to other traffic-groups.
+@label(__tg_load6__): traffic-group 6 load relative to other traffic-groups.
+@label(__tg_load7__): traffic-group 7 load relative to other traffic-groups.
+@label(__tg_load8__): traffic-group 8 load relative to other traffic-groups.
+@label(__tg_load9__): traffic-group 9 load relative to other traffic-groups.
+@label(__tg_load10__): traffic-group 10 load relative to other traffic-groups.
+@label(__tg_load11__): traffic-group 11 load relative to other traffic-groups.
+@label(__tg_load12__): traffic-group 12 load relative to other traffic-groups.
+@label(__tg_load13__): traffic-group 13 load relative to other traffic-groups.
+@label(__tg_load14__): traffic-group 14 load relative to other traffic-groups.
+@label(__tg_load15__): traffic-group 15 load relative to other traffic-groups.
+@label(__tg_load16__): traffic-group 16 load relative to other traffic-groups.
+@label(__tg_load17__): traffic-group 17 load relative to other traffic-groups.
+@label(__tg_load18__): traffic-group 18 load relative to other traffic-groups.
+@label(__tg_load19__): traffic-group 19 load relative to other traffic-groups.
+@label(__tg_load20__): traffic-group 20 load relative to other traffic-groups.
+@label(__tg_load21__): traffic-group 21 load relative to other traffic-groups.
+@label(__tg_load22__): traffic-group 22 load relative to other traffic-groups.
+@label(__tg_load23__): traffic-group 23 load relative to other traffic-groups.
+@label(__tg_load24__): traffic-group 24 load relative to other traffic-groups.
+@label(__tg_load25__): traffic-group 25 load relative to other traffic-groups.
+@label(__tg_load26__): traffic-group 26 load relative to other traffic-groups.
+@label(__tg_load27__): traffic-group 27 load relative to other traffic-groups.
+@label(__tg_load28__): traffic-group 28 load relative to other traffic-groups.
+@label(__tg_load29__): traffic-group 29 load relative to other traffic-groups.
+@label(__tg_load30__): traffic-group 30 load relative to other traffic-groups.
+@label(__tg_load31__): traffic-group 31 load relative to other traffic-groups.
+@label(__tg_load32__): traffic-group 32 load relative to other traffic-groups.
+@label(__tg_load33__): traffic-group 33 load relative to other traffic-groups.
+@label(__tg_load34__): traffic-group 34 load relative to other traffic-groups.
+@label(__tg_load35__): traffic-group 35 load relative to other traffic-groups.
+@label(__tg_load36__): traffic-group 36 load relative to other traffic-groups.
+@label(__tg_load37__): traffic-group 37 load relative to other traffic-groups.
+@label(__tg_load38__): traffic-group 38 load relative to other traffic-groups.
+@label(__tg_load39__): traffic-group 39 load relative to other traffic-groups.
+@label(__tg_load40__): traffic-group 40 load relative to other traffic-groups.
+@label(__tg_load41__): traffic-group 41 load relative to other traffic-groups.
+@label(__tg_load42__): traffic-group 42 load relative to other traffic-groups.
+@label(__tg_load43__): traffic-group 43 load relative to other traffic-groups.
+@label(__tg_load44__): traffic-group 44 load relative to other traffic-groups.
+@label(__tg_load45__): traffic-group 45 load relative to other traffic-groups.
+@label(__tg_load46__): traffic-group 46 load relative to other traffic-groups.
+@label(__tg_load47__): traffic-group 47 load relative to other traffic-groups.
+@label(__tg_load48__): traffic-group 48 load relative to other traffic-groups.
+@label(__tg_load49__): traffic-group 49 load relative to other traffic-groups.
+@label(__tg_load50__): traffic-group 50 load relative to other traffic-groups.
+@label(__tg_load51__): traffic-group 51 load relative to other traffic-groups.
+@label(__tg_load52__): traffic-group 52 load relative to other traffic-groups.
+@label(__tg_load53__): traffic-group 53 load relative to other traffic-groups.
+@label(__tg_load54__): traffic-group 54 load relative to other traffic-groups.
+@label(__tg_load55__): traffic-group 55 load relative to other traffic-groups.
+@label(__tg_load56__): traffic-group 56 load relative to other traffic-groups.
+
+cm traffic-group traffic-group-2 {
+	ha-load-factor __tg_load2__
+}
+cm traffic-group traffic-group-3 {
+	ha-load-factor __tg_load3__
+}
+cm traffic-group traffic-group-4 {
+	ha-load-factor __tg_load4__
+}
+cm traffic-group traffic-group-5 {
+	ha-load-factor __tg_load5__
+}
+cm traffic-group traffic-group-6 {
+	ha-load-factor __tg_load6__
+}
+cm traffic-group traffic-group-7 {
+	ha-load-factor __tg_load7__
+}
+cm traffic-group traffic-group-8 {
+	ha-load-factor __tg_load8__
+}
+cm traffic-group traffic-group-9 {
+	ha-load-factor __tg_load9__
+}
+cm traffic-group traffic-group-10 {
+	ha-load-factor __tg_load10__
+}
+cm traffic-group traffic-group-11 {
+	ha-load-factor __tg_load11__
+}
+cm traffic-group traffic-group-12 {
+	ha-load-factor __tg_load12__
+}
+cm traffic-group traffic-group-13 {
+	ha-load-factor __tg_load13__
+}
+cm traffic-group traffic-group-14 {
+	ha-load-factor __tg_load14__
+}
+cm traffic-group traffic-group-15 {
+	ha-load-factor __tg_load15__
+}
+cm traffic-group traffic-group-16 {
+	ha-load-factor __tg_load16__
+}
+cm traffic-group traffic-group-17 {
+	ha-load-factor __tg_load17__
+}
+cm traffic-group traffic-group-18 {
+	ha-load-factor __tg_load18__
+}
+cm traffic-group traffic-group-19 {
+	ha-load-factor __tg_load19__
+}
+cm traffic-group traffic-group-20 {
+	ha-load-factor __tg_load20__
+}
+cm traffic-group traffic-group-21 {
+	ha-load-factor __tg_load21__
+}
+cm traffic-group traffic-group-22 {
+	ha-load-factor __tg_load22__
+}
+cm traffic-group traffic-group-23 {
+	ha-load-factor __tg_load23__
+}
+cm traffic-group traffic-group-24 {
+	ha-load-factor __tg_load24__
+}
+cm traffic-group traffic-group-25 {
+	ha-load-factor __tg_load25__
+}
+cm traffic-group traffic-group-26 {
+	ha-load-factor __tg_load26__
+}
+cm traffic-group traffic-group-27 {
+	ha-load-factor __tg_load27__
+}
+cm traffic-group traffic-group-28 {
+	ha-load-factor __tg_load28__
+}
+cm traffic-group traffic-group-29 {
+	ha-load-factor __tg_load29__
+}
+cm traffic-group traffic-group-30 {
+	ha-load-factor __tg_load30__
+}
+cm traffic-group traffic-group-31 {
+	ha-load-factor __tg_load31__
+}
+cm traffic-group traffic-group-32 {
+	ha-load-factor __tg_load32__
+}
+cm traffic-group traffic-group-33 {
+	ha-load-factor __tg_load33__
+}
+cm traffic-group traffic-group-34 {
+	ha-load-factor __tg_load34__
+}
+cm traffic-group traffic-group-35 {
+	ha-load-factor __tg_load35__
+}
+cm traffic-group traffic-group-36 {
+	ha-load-factor __tg_load36__
+}
+cm traffic-group traffic-group-37 {
+	ha-load-factor __tg_load37__
+}
+cm traffic-group traffic-group-38 {
+	ha-load-factor __tg_load38__
+}
+cm traffic-group traffic-group-39 {
+	ha-load-factor __tg_load39__
+}
+cm traffic-group traffic-group-40 {
+	ha-load-factor __tg_load40__
+}
+cm traffic-group traffic-group-41 {
+	ha-load-factor __tg_load41__
+}
+cm traffic-group traffic-group-42 {
+	ha-load-factor __tg_load42__
+}
+cm traffic-group traffic-group-43 {
+	ha-load-factor __tg_load43__
+}
+cm traffic-group traffic-group-44 {
+	ha-load-factor __tg_load44__
+}
+cm traffic-group traffic-group-45 {
+	ha-load-factor __tg_load45__
+}
+cm traffic-group traffic-group-46 {
+	ha-load-factor __tg_load46__
+}
+cm traffic-group traffic-group-47 {
+	ha-load-factor __tg_load47__
+}
+cm traffic-group traffic-group-48 {
+	ha-load-factor __tg_load48__
+}
+cm traffic-group traffic-group-49 {
+	ha-load-factor __tg_load49__
+}
+cm traffic-group traffic-group-50 {
+	ha-load-factor __tg_load50__
+}
+cm traffic-group traffic-group-51 {
+	ha-load-factor __tg_load51__
+}
+cm traffic-group traffic-group-52 {
+	ha-load-factor __tg_load52__
+}
+cm traffic-group traffic-group-53 {
+	ha-load-factor __tg_load53__
+}
+cm traffic-group traffic-group-54 {
+	ha-load-factor __tg_load54__
+}
+cm traffic-group traffic-group-55 {
+	ha-load-factor __tg_load55__
+}
+cm traffic-group traffic-group-56 {
+	ha-load-factor __tg_load56__
+}
+

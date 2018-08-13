@@ -1,0 +1,148 @@
+cli admin-partitions {
+    update-partition Common
+}
+
+sys application template default-route {
+
+    actions {
+        definition {
+
+            implementation {
+
+		puts "Starting iApp $tmsh::app_name.app generated with tmsh2iapp version 20171127.2"
+
+                set partition "/[lindex [split [tmsh::pwd] /] 1]"
+
+                puts "The iApp is being instantiated in @partition $partition"
+                if { $partition == "/" } { puts "Warning: unexpected behaviour when @partition variable is to \"/\"" }
+
+
+puts "Dumping values passed to iApp variables"
+puts ">>> regular variables"
+puts "__gw_default_route__ >${::var__gw_default_route}<"
+puts "__vlanid_default_route__ >${::var__vlanid_default_route}<"
+puts ">>> pool member variables"
+puts ">>> data record variables"
+puts ">>> firewall address list variables"
+puts ">>> firewall port list variables"
+puts ">>> url match category list variables"
+puts ">>> url nomatch category list variables"
+puts ">>> iworkflow variables"
+puts "End of dumping values passed to iApp variables"
+
+                set cfg { 
+net vlan default-route {
+    interfaces {
+        1.2 {
+            tagged
+        }
+    }
+    tag __vlanid_default_route__
+}
+
+net self self-default-route {
+    address __local__self_default_route__
+    traffic-group /Common/traffic-group-local-only
+    vlan default-route
+}
+
+net route default {
+    gw __gw_default_route__
+    mtu 1450
+    network default
+}
+
+net route snat {
+    interface /Common/default-route
+    mtu 1450
+    network 10.104.2.0/24
+} }
+
+
+                set cfg [string map "@service_folder $tmsh::app_name.app @partition $partition __gw_default_route__ {${::var__gw_default_route}} __vlanid_default_route__ {${::var__vlanid_default_route}} __app_service__ $tmsh::app_name.app/$tmsh::app_name " $cfg]
+
+
+                set this_bigip [ tmsh::list sys global-settings hostname ]
+                regexp -line "hostname (.*)" $this_bigip x this_bigip
+                puts "Found this BIG-IP is $this_bigip"
+                set index_bigip -1
+                set list_bigips [split [regexp -all -inline {\S+} $local__bigip_names]]
+                set i 0
+
+                foreach bigip $list_bigips {
+                   if {[regexp -nocase ^$bigip $this_bigip]} {
+                      puts "Matched $bigip with $this_bigip using index $i"
+                      if {$index_bigip != -1} {
+                          set i_name [lindex $i $list_bigips]
+                          set index_name [lindex $index_bigip $list_bigips]
+                          error "Several matches found for $this_bigip with indexes $index_bigip ($index_name) and $i ($i_name)"
+                      }
+                      set index_bigip $i
+                   }
+                   incr i
+                }
+                if {$index_bigip == -1} {
+                   error "Could not find $this_bigip in list >$local__bigip_names<"
+                }
+
+                set n_bigips [llength $list_bigips]
+                set ll [llength ${::local__self_default_route}]
+                if {$ll != $n_bigips} {
+                   error "The number of values in the variable local__self_default_route ($ll) is different than the number of BIG-IPs ($n_bigips), variable value is >${::local__self_default_route}<"
+                }
+
+                set value [lindex ${::local__self_default_route} $index_bigip]
+                puts "Applying local value >$value< for __local__self_default_route__"
+                set cfg [string map "__local__self_default_route__ {$value}" $cfg]
+
+                set fileId [open /var/tmp/default-route.cfg "w"]
+                puts -nonewline $fileId $cfg
+                close $fileId
+
+                tmsh::cd "/Common"
+                tmsh::load sys config merge file /var/tmp/default-route.cfg
+
+
+
+
+
+
+
+
+
+
+
+
+    
+                puts "Finished iApp $tmsh::app_name.app generated with tmsh2iapp version 20171127.2"
+            }
+    
+            presentation {
+
+                include "/Common/f5.apl_common"
+                section var {
+                        string gw_default_route display "xxlarge"
+                        string vlanid_default_route display "xxlarge"
+                }
+
+                section local {
+                        string bigip_names display "xxlarge"
+                        string self_default_route display "xxlarge"
+                }
+
+                text {
+
+                        var "General variables"
+                        var.gw_default_route "IP address of the gateway in the default-route network"
+                        var.vlanid_default_route "VLAN ID of the default-route network"
+
+                        local "Per BIG-IP local variables"
+                        local.bigip_names "List of all the BIG-IP names in the cluster"
+                        local.self_default_route "IP address with prefix of the self interface connected to the default-route"
+                }
+            } 
+            role-acl { admin manager resource-admin }
+        }
+    }
+
+}

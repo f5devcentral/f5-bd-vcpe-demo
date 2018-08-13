@@ -1,0 +1,92 @@
+---
+
+bigip_ha_interface: "1.1"
+bigip_provider_interface: "1.2"
+ansible_user: xxx
+ansible_ssh_pass: xxx
+gw_default_route: "192.168.0.1"
+pm__syslog_server_pool: "10.105.211.105:514"
+max_tokens: 10
+
+#master: 10.105.211.23
+#bigip_cluster_member:
+#  bigip1: "True"
+#  bigip2: "True"
+#  bigip3: "False"
+#  bigip4: "False"
+#  bigip5: "False"
+#  bigip6: "False"
+#  bigip7: "False"
+#  bigip8: "False"
+
+# Non numerical ID, useful because it is more human readable
+bigip_names:
+  - bigip1
+  - bigip2
+  - bigip3
+  - bigip4
+  - bigip5
+  - bigip6
+  - bigip7
+  - bigip8
+
+bigip_fqdn:
+  bigip1: "bigip1.bd.f5.com"
+  bigip2: "bigip2.bd.f5.com"
+  bigip3: "bigip3.bd.f5.com"
+  bigip4: "bigip4.bd.f5.com"
+  bigip5: "bigip5.bd.f5.com"
+  bigip6: "bigip6.bd.f5.com"
+  bigip7: "bigip7.bd.f5.com"
+  bigip8: "bigip8.bd.f5.com"
+
+bigip:
+  bigip1: "10.105.211.111"
+  bigip2: "10.105.211.112"
+  bigip3: "10.105.211.113" 
+  bigip4: "10.105.211.114" 
+  bigip5: "10.105.211.115" 
+  bigip6: "10.105.211.116"
+  bigip7: "10.105.211.117"
+  bigip8: "10.105.211.118"
+
+bigip_mgmt:
+  bigip1: "10.105.16.7"
+  bigip2: "10.105.16.3"
+  bigip3: "10.105.16.6"
+  bigip4: "10.105.16.10"
+  bigip5: "10.105.16.13"
+  bigip6: "10.105.16.15"
+  bigip7: "10.105.16.18"
+  bigip8: "10.105.16.19"
+
+bigip_ha:
+  bigip1: "10.105.17.10"
+  bigip2: "10.105.17.9"
+  bigip3: "10.105.17.3"
+  bigip4: "10.105.17.12"
+  bigip5: "10.105.17.5"
+  bigip6: "10.105.17.17"
+  bigip7: "10.105.17.4"
+  bigip8: "10.105.17.13"
+
+bigip_default_route:
+  bigip1: "10.104.2.11"
+  bigip2: "10.104.2.12"
+  bigip3: "10.104.2.13"
+  bigip4: "10.104.2.14"
+  bigip5: "10.104.2.15"
+  bigip6: "10.104.2.16"
+  bigip7: "10.104.2.17"
+  bigip8: "10.104.2.18"
+
+bigip_provider:
+  bigip1: "fa:16:3e:e3:ad:1d"
+  bigip2: "fa:16:3e:e3:32:ac"
+  bigip3: "fa:16:3e:90:ff:54"
+  bigip4: "fa:16:3e:6b:78:c8"
+  bigip5: "fa:16:3e:4c:bd:1c"
+  bigip6: "fa:16:3e:8d:ca:32"
+  bigip7: "fa:16:3e:1b:e5:94"
+  bigip8: "fa:16:3e:6f:07:29"
+

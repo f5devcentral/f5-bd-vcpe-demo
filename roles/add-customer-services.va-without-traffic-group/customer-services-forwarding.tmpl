@@ -1,0 +1,433 @@
+cli admin-partitions {
+    update-partition Common
+}
+
+sys application template customer-services-forwarding {
+
+    actions {
+        definition {
+
+            implementation {
+
+		puts "Starting iApp $tmsh::app_name.app generated with tmsh2iapp version 20171127.2"
+
+                set partition "/[lindex [split [tmsh::pwd] /] 1]"
+
+                puts "The iApp is being instantiated in @partition $partition"
+                if { $partition == "/" } { puts "Warning: unexpected behaviour when @partition variable is to \"/\"" }
+                tmsh::create sys file ifile ${::var__blocking_page} source-path ${::var__blocking_page_import}
+                tmsh::create sys file ifile ${::var__f5_logo} source-path ${::var__f5_logo_import}
+                tmsh::create sys file ssl-cert ${::var__ca_cert} source-path ${::var__ca_cert_import}
+                tmsh::create sys file ssl-key ${::var__ca_key} source-path ${::var__ca_key_import}
+
+
+puts "Dumping values passed to iApp variables"
+puts ">>> regular variables"
+puts "__blocking_page__ >${::var__blocking_page}<"
+puts "__ca_cert__ >${::var__ca_cert}<"
+puts "__ca_key__ >${::var__ca_key}<"
+puts "__f5_logo__ >${::var__f5_logo}<"
+puts "__max_rate__ >${::var__max_rate}<"
+puts "__segment_id__ >${::var__segment_id}<"
+puts "__snat_addresses__ >${::var__snat_addresses}<"
+puts "__traffic_group__ >${::var__traffic_group}<"
+puts ">>> pool member variables"
+puts ">>> data record variables"
+puts "> __dr__filtered_categories__ >${::dr__filtered_categories}<"
+puts ">>> firewall address list variables"
+puts ">>> firewall port list variables"
+puts ">>> url match category list variables"
+puts ">>> url nomatch category list variables"
+puts ">>> iworkflow variables"
+puts "End of dumping values passed to iApp variables"
+
+                set cfg { 
+ltm snat-translation __snat_addresses__ {
+    address __snat_addresses__
+    inherited-traffic-group false
+    traffic-group traffic-group-__traffic_group__
+}
+
+ltm snatpool snatpool-customer-__segment_id__ {
+    members {
+        __snat_addresses__
+    }
+}
+
+net bwc policy custom-bandwith-controller-__segment_id__ {
+    dynamic disabled
+    max-rate __max_rate__
+}
+
+net self self-customer-__segment_id__-floating {
+    address 192.168.__segment_id__.3%__segment_id__/24
+    allow-service all
+    floating enabled
+    traffic-group traffic-group-__traffic_group__
+    vlan customer-__segment_id__
+}
+
+
+ltm data-group internal filtered_categories {
+    __dr__filtered_categories__
+    type string
+}
+
+ltm ifile f5.jpg {
+    file-name @partition/@service_folder/f5.jpg
+}
+
+ltm ifile blocking-page.html {
+    file-name @partition/@service_folder/blocking-page.html
+}
+
+ltm rule blocking-page {
+when HTTP_REQUEST {
+
+    if { [HTTP::path] eq "/f5.jpg" } {
+        HTTP::respond 200 content [ifile get "@partition/@service_folder/__f5_logo__"] "Content-Type" "image/jpeg"
+    } else {
+        HTTP::respond 200 content [ifile get "@partition/@service_folder/__blocking_page__"] "Content-Type" "text/html"
+    }
+}
+}
+
+
+ltm rule url_filtering {
+when CLIENT_ACCEPTED {
+   set hsl [HSL::open -proto UDP -pool syslog_server_pool]
+}
+
+when HTTP_REQUEST {
+
+    set debug 1
+
+    set this_uri http://[HTTP::host]
+    set reply [CATEGORY::lookup $this_uri]
+    set category [getfield [getfield  $reply / 3] " " 1]
+
+    if ($debug) { log local0. "Category lookup for $this_uri give $category ($reply)" }
+    
+    if {[class match $category equals filtered_categories]} {
+
+        if {$debug} { log local0. "category matched filtered_categories" }
+	HSL::send $hsl "<190> [IP::client_addr] being blocked when accessing [HTTP::host]/[HTTP::uri] (category is $category)\n"
+	HTTP::redirect http://192.168.255.1	
+    }
+}
+}
+
+ltm rule tls_sni_filtering {
+when CLIENT_ACCEPTED {
+    set debug 1
+    set intercept_connection 0
+
+    HTTP::disable
+}
+
+when CLIENTSSL_CLIENTHELLO {
+
+    if { [SSL::extensions exists -type 0] } {
+        binary scan [SSL::extensions -type 0] x9a* sni_name
+        if {$debug} { log local0.info "SNI in CLIENT_HELLO is: $sni_name" }
+
+        set this_uri http://$sni_name
+        set reply [CATEGORY::lookup $this_uri] 
+        set category [getfield [getfield  $reply / 3] " " 1]
+
+        if ($debug) { log local0. "Category lookup for $this_uri returns $category ($reply)" }
+
+        if {[class match $category equals filtered_categories]} {
+            if {$debug} { log local0. "category matched filtered_categories" }
+            set intercept_connection 1
+        }
+    } else {
+        # If no SNI has been sent then we redirect uninconditionally
+        set intercept_connection 1
+    }
+}
+
+when CLIENTSSL_SERVERHELLO_SEND {
+
+    if {$intercept_connection} {
+    
+        if {$debug} { log local0. 'intercepting' }
+          
+            # not valid in current event context (CLIENTSSL_CLIENTHELLO)][SSL::forward_proxy policy intercept]
+        SSL::forward_proxy policy intercept
+        HTTP::enable
+    }
+}
+
+when HTTP_REQUEST {
+
+    if {$debug} { log local0. 'redirecting' }
+
+    set hsl [HSL::open -proto UDP -pool syslog_server_pool]
+    HSL::send $hsl "<190> [IP::client_addr] being blocked when accessing [HTTP::host] (category is $category)\n"
+    
+    HTTP::redirect http://192.168.255.1
+}
+
+}
+
+
+ltm profile client-ssl clientssl-local-ca {
+    cert default.crt
+    cert-key-chain {
+        default {
+            cert default.crt
+            key default.key
+        }
+    }
+    cert-lifespan 30
+    chain none
+    defaults-from clientssl
+    forward-proxy-bypass-default-action bypass
+    inherit-certkeychain false
+    key default.key
+    passphrase none
+    proxy-ca-cert @partition/@service_folder/__ca_cert__
+    proxy-ca-key @partition/@service_folder/__ca_key__
+    proxy-ca-passphrase $M$6Q$wd3E1gzgpesr4TAlAGRn+A==
+    ssl-forward-proxy enabled
+    ssl-forward-proxy-bypass enabled
+}
+
+
+ltm profile server-ssl serverssl-local-ca {
+    defaults-from serverssl
+    ssl-forward-proxy enabled
+    ssl-forward-proxy-bypass enabled
+}
+
+ltm pool default_gw {
+    members {
+        192.168.0.1:any {
+            address 192.168.0.1
+            session monitor-enabled
+            state up
+        }
+    }
+    monitor gateway_icmp 
+}
+
+ltm dns cache transparent dns-cache-custom { }
+
+ltm profile dns dns-custom {
+    cache dns-cache-custom
+    defaults-from dns
+    dns64 disabled
+    enable-cache yes
+    enable-dns-express no
+    enable-dnssec no
+    enable-gtm no
+    process-rd yes
+    unhandled-query-action allow
+    use-local-bind no
+}
+
+ltm profile udp udp-custom {
+    datagram-load-balancing enabled
+    defaults-from udp
+}
+
+ltm virtual dns {
+    bwc-policy @partition/@service_folder/custom-bandwith-controller-__segment_id__
+    destination 0.0.0.0%__segment_id__:domain
+    ip-protocol udp
+    mask any
+    pool default_gw
+    profiles {
+        dns-custom { }
+        udp-custom { }
+    }
+    source 0.0.0.0%__segment_id__/0
+    source-address-translation {
+        pool @partition/@service_folder/snatpool-customer-__segment_id__
+        type snat
+    }
+    translate-address disabled
+    translate-port disabled
+    vlans {
+        customer-__segment_id__
+    }
+    vlans-enabled
+}
+
+ltm virtual icmp {
+    bwc-policy @partition/@service_folder/custom-bandwith-controller-__segment_id__
+    destination 0.0.0.0%__segment_id__:any
+    ip-forward
+    ip-protocol icmp
+    mask any
+    profiles {
+        fastL4 { }
+    }
+    source 0.0.0.0%__segment_id__/0
+    source-address-translation {
+        pool @partition/@service_folder/snatpool-customer-__segment_id__
+        type snat
+    }
+    translate-address disabled
+    translate-port disabled
+    vlans {
+        customer-__segment_id__
+    }
+    vlans-enabled
+}
+
+ltm virtual http {
+    bwc-policy @partition/@service_folder/custom-bandwith-controller-__segment_id__
+    destination 0.0.0.0%__segment_id__:http
+    ip-protocol tcp
+    mask any
+    profiles {
+        http-transparent { }
+        tcp { }
+    }
+    rules {
+        url_filtering
+    }
+    source-address-translation {
+        pool @partition/@service_folder/snatpool-customer-__segment_id__
+        type snat
+    }
+    translate-address disabled
+    translate-port disabled
+    vlans {
+        customer-__segment_id__
+    }
+    vlans-enabled
+}
+
+ltm virtual https {
+    bwc-policy @partition/@service_folder/custom-bandwith-controller-__segment_id__
+    destination 0.0.0.0%__segment_id__:https
+    ip-protocol tcp
+    mask any
+    profiles {
+        @partition/@service_folder/clientssl-local-ca {
+            context clientside
+        }
+        @partition/@service_folder/serverssl-local-ca {
+            context serverside
+        }
+        http { }
+        tcp { }
+    }
+    rules {
+        @partition/@service_folder/tls_sni_filtering
+    }
+    source-address-translation {
+        pool @partition/@service_folder/snatpool-customer-__segment_id__
+        type snat
+    }
+    translate-address disabled
+    translate-port disabled
+    vlans {
+        customer-__segment_id__
+    }
+    vlans-enabled
+}
+
+ltm virtual blocking-page {
+    destination 192.168.255.1%__segment_id__:http
+    ip-protocol tcp
+    mask 255.255.255.255
+    profiles {
+        http { }
+        tcp { }
+    }
+    rules {
+        blocking-page
+    }
+    translate-address enabled
+    translate-port enabled
+} }
+
+
+
+                set {::dr__filtered_categories} [string map {[ {} ] {} \' {} \" {} , { }} ${::dr__filtered_categories}]
+                set {::dr__filtered_categories} [regexp -all -inline {\S+} ${::dr__filtered_categories}]
+                set cfg [string map "@service_folder $tmsh::app_name.app @partition $partition __blocking_page__ {${::var__blocking_page}} __ca_cert__ {${::var__ca_cert}} __ca_key__ {${::var__ca_key}} __f5_logo__ {${::var__f5_logo}} __max_rate__ {${::var__max_rate}} __segment_id__ {${::var__segment_id}} __snat_addresses__ {${::var__snat_addresses}} __traffic_group__ {${::var__traffic_group}} __dr__filtered_categories__ {} __app_service__ $tmsh::app_name.app/$tmsh::app_name " $cfg]
+
+                set fileId [open /var/tmp/customer-services-forwarding.cfg "w"]
+                puts -nonewline $fileId $cfg
+                close $fileId
+
+                
+                tmsh::load sys config merge file /var/tmp/customer-services-forwarding.cfg
+
+
+
+
+                if {[string length ${::dr__filtered_categories}] > 0} {
+                   set cmd "tmsh::modify ltm data-group internal filtered_categories description filtered_categories { records replace-all-with { ${::dr__filtered_categories} } }"
+                   puts "$cmd"
+                   eval $cmd
+                }
+
+
+
+
+
+
+
+
+
+
+set cmd "tmsh::modify sys application service $tmsh::app_name strict-updates disabled"
+                   puts "$cmd"
+                   eval $cmd
+    
+                puts "Finished iApp $tmsh::app_name.app generated with tmsh2iapp version 20171127.2"
+            }
+    
+            presentation {
+
+                include "/Common/f5.apl_common"
+                section var {
+                        string blocking_page display "xxlarge"
+                        string blocking_page_import display "xxlarge"
+                        string ca_cert display "xxlarge"
+                        string ca_cert_import display "xxlarge"
+                        string ca_key display "xxlarge"
+                        string ca_key_import display "xxlarge"
+                        string f5_logo display "xxlarge"
+                        string f5_logo_import display "xxlarge"
+                        string max_rate display "xxlarge"
+                        string segment_id display "xxlarge"
+                        string snat_addresses display "xxlarge"
+                        string traffic_group display "xxlarge"
+                }
+
+                section dr {
+                        string filtered_categories display "xxlarge"
+                }
+
+                text {
+
+                        var "General variables"
+                        var.blocking_page "Blocking page HTML"
+                        var.blocking_page_import "URL for Blocking page HTML"
+                        var.ca_cert "Certificate for the blocking-page-ssl VIP"
+                        var.ca_cert_import "URL for Certificate for the blocking-page-ssl VIP"
+                        var.ca_key "Private key for the blocking-page-ssl VIP"
+                        var.ca_key_import "URL for Private key for the blocking-page-ssl VIP"
+                        var.f5_logo "F5 Logo JPEG"
+                        var.f5_logo_import "URL for F5 Logo JPEG"
+                        var.max_rate "Maximum rate"
+                        var.segment_id "Segment ID of the default-route network"
+                        var.snat_addresses "IP addresses to which this customer is SNATed too"
+                        var.traffic_group "traffic-group ID"
+
+                        dr "Internal data-group records"
+                        dr.filtered_categories "List of filtered URL categories"
+                }
+            } 
+            role-acl { admin manager resource-admin }
+        }
+    }
+
+}

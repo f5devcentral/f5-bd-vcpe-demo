@@ -1,0 +1,8 @@
+@label(__gw_default_route__): IP address of the gateway in the default-route network
+
+net route default {
+    gw __gw_default_route__
+    mtu 1450
+    network default
+}
+

@@ -1,0 +1,6 @@
+@label(__pm__syslog_server_pool__): SYSLOG High Speed Logging pool
+
+ltm pool syslog_server_pool {
+    __pm__syslog_server_pool__
+}
+

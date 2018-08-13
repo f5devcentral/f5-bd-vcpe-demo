@@ -1,0 +1,10 @@
+- name: "Clean BIG-IP auth tokens"
+  delegate_to: localhost
+  shell: |
+    exit 1
+  retries: 100 
+  delay: 1
+  register: result
+  until: result|success
+  ignore_errors: yes
+

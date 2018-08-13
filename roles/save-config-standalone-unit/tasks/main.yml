@@ -1,0 +1,11 @@
+- name: "Save config in standalone unit"
+  bigip_command:
+      server: "{{ bigip[id] }}"
+      commands:
+      - save sys config
+  delegate_to: localhost
+  when: bigip_cluster_member[id] == False
+  tags:
+    - always
+
+

@@ -1,0 +1,319 @@
+@import(ssl-cert): __ca_cert__
+@import(ssl-key): __ca_key__
+@import(ifile): __f5_logo__ __blocking_page__
+@label(__ca_cert__): Certificate for the blocking-page-ssl VIP
+@label(__ca_key__): Private key for the blocking-page-ssl VIP
+@label(__f5_logo__): F5 Logo JPEG
+@label(__blocking_page__): Blocking page HTML
+@label(__customer_prefix__): IP prefix assigned to the customer
+@label(__snat_addresses__): IP addresses to which this customer is SNATed too
+@label(__max_rate__): Maximum rate
+@label(__snat_addresses__): IP addresses to which this customer is SNATed too
+@label(__segment_id__): Segment ID of the default-route network
+@label(__dr__filtered_categories__): List of filtered URL categories
+@label(__traffic_group__): traffic-group ID
+@json(list): __dr__filtered_categories__
+
+ltm snat-translation __snat_addresses__ {
+    address __snat_addresses__
+}
+
+ltm snatpool snatpool-customer-__segment_id__ {
+    members {
+        __snat_addresses__
+    }
+}
+
+net bwc policy custom-bandwith-controller-__segment_id__ {
+    dynamic disabled
+    max-rate __max_rate__
+}
+
+net self self-customer-__segment_id__-floating {
+    address 192.168.__segment_id__.3%__segment_id__/24
+    allow-service all
+    floating enabled
+    traffic-group traffic-group-__traffic_group__
+    vlan customer-__segment_id__
+}
+
+
+ltm data-group internal filtered_categories {
+    __dr__filtered_categories__
+    type string
+}
+
+ltm ifile f5.jpg {
+    file-name @partition/@service_folder/f5.jpg
+}
+
+ltm ifile blocking-page.html {
+    file-name @partition/@service_folder/blocking-page.html
+}
+
+ltm rule blocking-page {
+when HTTP_REQUEST {
+
+    if { [HTTP::path] eq "/f5.jpg" } {
+        HTTP::respond 200 content [ifile get "@partition/@service_folder/__f5_logo__"] "Content-Type" "image/jpeg"
+    } else {
+        HTTP::respond 200 content [ifile get "@partition/@service_folder/__blocking_page__"] "Content-Type" "text/html"
+    }
+}
+}
+
+
+ltm rule url_filtering {
+when CLIENT_ACCEPTED {
+   set hsl [HSL::open -proto UDP -pool syslog_server_pool]
+}
+
+when HTTP_REQUEST {
+
+    set debug 1
+
+    set this_uri http://[HTTP::host]
+    set reply [CATEGORY::lookup $this_uri]
+    set category [getfield [getfield  $reply / 3] " " 1]
+
+    if ($debug) { log local0. "Category lookup for $this_uri give $category ($reply)" }
+    
+    if {[class match $category equals filtered_categories]} {
+
+        if {$debug} { log local0. "category matched filtered_categories" }
+	HSL::send $hsl "<190> [IP::client_addr] being blocked when accessing [HTTP::host]/[HTTP::uri] (category is $category)\n"
+	HTTP::redirect http://192.168.255.1	
+    }
+}
+}
+
+ltm rule tls_sni_filtering {
+when CLIENT_ACCEPTED {
+    set debug 1
+    set intercept_connection 0
+
+    HTTP::disable
+}
+
+when CLIENTSSL_CLIENTHELLO {
+
+    if { [SSL::extensions exists -type 0] } {
+        binary scan [SSL::extensions -type 0] x9a* sni_name
+        if {$debug} { log local0.info "SNI in CLIENT_HELLO is: $sni_name" }
+
+        set this_uri http://$sni_name
+        set reply [CATEGORY::lookup $this_uri] 
+        set category [getfield [getfield  $reply / 3] " " 1]
+
+        if ($debug) { log local0. "Category lookup for $this_uri returns $category ($reply)" }
+
+        if {[class match $category equals filtered_categories]} {
+            if {$debug} { log local0. "category matched filtered_categories" }
+            set intercept_connection 1
+        }
+    } else {
+        # If no SNI has been sent then we redirect uninconditionally
+        set intercept_connection 1
+    }
+}
+
+when CLIENTSSL_SERVERHELLO_SEND {
+
+    if {$intercept_connection} {
+    
+        if {$debug} { log local0. 'intercepting' }
+          
+            # not valid in current event context (CLIENTSSL_CLIENTHELLO)][SSL::forward_proxy policy intercept]
+        SSL::forward_proxy policy intercept
+        HTTP::enable
+    }
+}
+
+when HTTP_REQUEST {
+
+    if {$debug} { log local0. 'redirecting' }
+
+    set hsl [HSL::open -proto UDP -pool syslog_server_pool]
+    HSL::send $hsl "<190> [IP::client_addr] being blocked when accessing [HTTP::host] (category is $category)\n"
+    
+    HTTP::redirect http://192.168.255.1
+}
+
+}
+
+
+ltm profile client-ssl clientssl-local-ca {
+    cert default.crt
+    cert-key-chain {
+        default {
+            cert default.crt
+            key default.key
+        }
+    }
+    cert-lifespan 30
+    chain none
+    defaults-from clientssl
+    forward-proxy-bypass-default-action bypass
+    inherit-certkeychain false
+    key default.key
+    passphrase none
+    proxy-ca-cert @partition/@service_folder/__ca_cert__
+    proxy-ca-key @partition/@service_folder/__ca_key__
+    proxy-ca-passphrase $M$6Q$wd3E1gzgpesr4TAlAGRn+A==
+    ssl-forward-proxy enabled
+    ssl-forward-proxy-bypass enabled
+}
+
+
+ltm profile server-ssl serverssl-local-ca {
+    defaults-from serverssl
+    ssl-forward-proxy enabled
+    ssl-forward-proxy-bypass enabled
+}
+
+ltm pool default_gw {
+    members {
+        192.168.0.1:any {
+            address 192.168.0.1
+            session monitor-enabled
+            state up
+        }
+    }
+    monitor gateway_icmp 
+}
+
+ltm dns cache transparent dns-cache-custom { }
+
+ltm profile dns dns-custom {
+    cache dns-cache-custom
+    defaults-from dns
+    dns64 disabled
+    enable-cache yes
+    enable-dns-express no
+    enable-dnssec no
+    enable-gtm no
+    process-rd yes
+    unhandled-query-action allow
+    use-local-bind no
+}
+
+ltm profile udp udp-custom {
+    datagram-load-balancing enabled
+    defaults-from udp
+}
+
+ltm virtual dns {
+    bwc-policy @partition/@service_folder/custom-bandwith-controller-__segment_id__
+    destination 0.0.0.0%__segment_id__:domain
+    ip-protocol udp
+    mask any
+    pool default_gw
+    profiles {
+        dns-custom { }
+        udp-custom { }
+    }
+    source 0.0.0.0%__segment_id__/0
+    source-address-translation {
+        pool @partition/@service_folder/snatpool-customer-__segment_id__
+        type snat
+    }
+    translate-address disabled
+    translate-port disabled
+    vlans {
+        customer-__segment_id__
+    }
+    vlans-enabled
+}
+
+ltm virtual icmp {
+    bwc-policy @partition/@service_folder/custom-bandwith-controller-__segment_id__
+    destination 0.0.0.0%__segment_id__:any
+    ip-forward
+    ip-protocol icmp
+    mask any
+    profiles {
+        fastL4 { }
+    }
+    source 0.0.0.0%__segment_id__/0
+    source-address-translation {
+        pool @partition/@service_folder/snatpool-customer-__segment_id__
+        type snat
+    }
+    translate-address disabled
+    translate-port disabled
+    vlans {
+        customer-__segment_id__
+    }
+    vlans-enabled
+}
+
+ltm virtual http {
+    bwc-policy @partition/@service_folder/custom-bandwith-controller-__segment_id__
+    destination 0.0.0.0%__segment_id__:http
+    ip-protocol tcp
+    mask any
+    profiles {
+        http-transparent { }
+        tcp { }
+    }
+    rules {
+        url_filtering
+    }
+    source-address-translation {
+        pool @partition/@service_folder/snatpool-customer-__segment_id__
+        type snat
+    }
+    translate-address disabled
+    translate-port disabled
+    vlans {
+        customer-__segment_id__
+    }
+    vlans-enabled
+}
+
+ltm virtual https {
+    bwc-policy @partition/@service_folder/custom-bandwith-controller-__segment_id__
+    destination 0.0.0.0%__segment_id__:https
+    ip-protocol tcp
+    mask any
+    profiles {
+        @partition/@service_folder/clientssl-local-ca {
+            context clientside
+        }
+        @partition/@service_folder/serverssl-local-ca {
+            context serverside
+        }
+        http { }
+        tcp { }
+    }
+    rules {
+        @partition/@service_folder/tls_sni_filtering
+    }
+    source-address-translation {
+        pool @partition/@service_folder/snatpool-customer-__segment_id__
+        type snat
+    }
+    translate-address disabled
+    translate-port disabled
+    vlans {
+        customer-__segment_id__
+    }
+    vlans-enabled
+}
+
+ltm virtual blocking-page {
+    destination 192.168.255.1%__segment_id__:http
+    ip-protocol tcp
+    mask 255.255.255.255
+    profiles {
+        http { }
+        tcp { }
+    }
+    rules {
+        blocking-page
+    }
+    translate-address enabled
+    translate-port enabled
+}
+
+

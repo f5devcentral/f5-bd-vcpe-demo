@@ -1,0 +1,16 @@
+---
+
+- name: "Delete customer networks"
+  with_dict: "{{ ansible_local.customers.ids }}"
+  loop_control:
+    loop_var: outer_item
+  include_role: 
+    name: del-customer-networks
+  vars:
+    segment_id: "{{ outer_item.key }}"
+    bigip_cluster_members_leaving: True
+    traffic_group: "{{ outer_item.value }}"
+#  when: bigip_cluster_member[id] == False
+  tags:
+    - del
+
